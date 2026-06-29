@@ -5,7 +5,6 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     phenix-pins.url = "github:matthis-k/phenix-pins";
     nixpkgs.follows = "phenix-pins/nixpkgs";
-    phenix-tend.url = "github:matthis-k/phenix-tend";
   };
 
   outputs =

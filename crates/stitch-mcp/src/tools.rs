@@ -44,7 +44,10 @@ fn run_exec_plan(
     exec::run_plan(cfg, &plan, &opts)
 }
 
-fn collect_status_json(cfg: &stitch::model::WorkspaceConfig, repo_filter: &[String]) -> Vec<Value> {
+fn collect_status_json(
+    cfg: &stitch::model::WorkspaceConfig,
+    repo_filter: &[String],
+) -> Result<Vec<Value>, String> {
     let selection = if repo_filter.is_empty() {
         exec::SelectionMode::All
     } else {
@@ -59,17 +62,14 @@ fn collect_status_json(cfg: &stitch::model::WorkspaceConfig, repo_filter: &[Stri
         },
         condition: None,
     };
-    let report = match run_exec_plan(
+    let report = run_exec_plan(
         cfg,
         selection,
         repo_filter.to_vec(),
         exec::ClosureMode::SelfOnly,
         exec::OrderMode::Stable,
         step,
-    ) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
+    )?;
     let mut statuses = Vec::new();
     for nr in &report.node_results {
         for sr in &nr.step_results {
@@ -80,7 +80,7 @@ fn collect_status_json(cfg: &stitch::model::WorkspaceConfig, repo_filter: &[Stri
             }
         }
     }
-    statuses
+    Ok(statuses)
 }
 
 pub struct StitchStatusTool;
@@ -140,7 +140,13 @@ impl McpTool for StitchStatusTool {
             }
         };
 
-        let statuses = collect_status_json(&cfg, &repo_filter);
+        let statuses = collect_status_json(&cfg, &repo_filter).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("Status collection failed: {e}"),
+                &audit_id,
+            )
+        })?;
         let mut repo_statuses: Vec<Value> = Vec::new();
         let mut short_lines: Vec<String> = Vec::new();
         let mut dirty_repos: Vec<String> = Vec::new();
@@ -395,8 +401,15 @@ impl McpTool for StitchDagTool {
             }
         };
 
-        let statuses = collect_status_json(&cfg, &repo_filter);
+        let statuses = collect_status_json(&cfg, &repo_filter).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("DAG status discovery failed: {e}"),
+                &audit_id,
+            )
+        })?;
         let mut nodes: Vec<Value> = Vec::new();
+        let mut evidence_message: Option<&str> = None;
 
         for s in &statuses {
             let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -492,8 +505,36 @@ impl McpTool for StitchDagTool {
             }
         }
 
+        if mode == "full" && nodes.is_empty() {
+            let scope = exec::ExecutionScope {
+                selection: exec::SelectionMode::All,
+                explicit_nodes: Vec::new(),
+                closure: exec::ClosureMode::All,
+                order: exec::OrderMode::ProvidersFirst,
+            };
+            let evidence_nodes = exec::build_scope(&cfg, &scope).map_err(|e| {
+                mk_err(
+                    ErrorKind::Internal,
+                    &format!("Topology evidence failed: {e}"),
+                    &audit_id,
+                )
+            })?;
+            for node in evidence_nodes {
+                nodes.push(json!({
+                    "id": format!("{}:topology", node.name),
+                    "kind": "topology",
+                    "repo": node.name,
+                    "path": node.path,
+                    "layer": node.layer,
+                    "role": node.role,
+                    "depends_on": []
+                }));
+            }
+            evidence_message = Some("No dirty repos; showing validated full topology evidence");
+        }
+
         let result = ToolResult::ok(
-            json!({ "nodes": nodes, "total": nodes.len(), "mode": mode }),
+            json!({ "nodes": nodes, "total": nodes.len(), "mode": mode, "message": evidence_message }),
             format!("DAG: {} node(s) in {} mode", nodes.len(), mode),
             &audit_id,
         );
@@ -528,14 +569,24 @@ impl McpTool for StitchCommitTemplateTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let cfg = stitch::config::find_and_load().unwrap_or(stitch::model::WorkspaceConfig {
-            version: 1,
-            workspace: ".".to_string(),
-            repos: vec![],
-            config_dir: None,
-        });
+        let cfg = match stitch::config::find_and_load() {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Config: {}", e),
+                    &audit_id,
+                ))
+            }
+        };
 
-        let statuses = collect_status_json(&cfg, &[]);
+        let statuses = collect_status_json(&cfg, &[]).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("Template status discovery failed: {e}"),
+                &audit_id,
+            )
+        })?;
         let mut messages = serde_json::Map::new();
 
         for s in &statuses {

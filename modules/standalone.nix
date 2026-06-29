@@ -9,6 +9,14 @@
     let
       filteredSrc = lib.cleanSource ../.;
 
+      rustToolchain = [
+        pkgs.cargo
+        pkgs.rustc
+        # These provide cargo-fmt and cargo-clippy subcommands for Tend.
+        pkgs.rustfmt
+        pkgs.clippy
+      ];
+
       stitchCliPkg = pkgs.rustPlatform.buildRustPackage {
         pname = "stitch";
         version = "0.1.0";
@@ -86,10 +94,7 @@
         cargo-check =
           mkCargoCheck "phenix-stitch-cargo-check" "cargo check --workspace --all-targets"
             "cargo check --workspace --all-targets"
-            [
-              pkgs.cargo
-              pkgs.rustc
-            ];
+            rustToolchain;
 
         cargo-test =
           mkCargoCheck "phenix-stitch-cargo-test" "cargo test --workspace" "cargo test --workspace"
@@ -101,37 +106,26 @@
 
         cargo-fmt =
           mkCargoCheck "phenix-stitch-cargo-fmt" "cargo fmt --all --check" "cargo fmt --all --check"
-            [
-              pkgs.cargo
-              pkgs.rustfmt
-            ];
+            rustToolchain;
 
         cargo-clippy =
           mkCargoCheck "phenix-stitch-cargo-clippy"
             "cargo clippy --quiet --workspace --all-targets -- -D warnings"
             "cargo clippy --quiet --workspace --all-targets -- -D warnings"
-            [
-              pkgs.cargo
-              pkgs.clippy
-              pkgs.rustc
-            ];
+            rustToolchain;
 
-        tend-gate =
-          pkgs.runCommand "phenix-stitch-tend-gate"
+        local-gate =
+          pkgs.runCommand "phenix-stitch-local-gate"
             {
               nativeBuildInputs = [
-                inputs.phenix-tend.packages.${system}.tend
                 stitchCliPkg
                 pkgs.git
-                pkgs.cargo
-                pkgs.rustc
-                pkgs.rustfmt
-                pkgs.clippy
                 pkgs.nixfmt
                 pkgs.statix
                 pkgs.deadnix
                 pkgs.stdenv.cc
-              ];
+              ]
+              ++ rustToolchain;
               inherit cargoDeps;
               src = filteredSrc;
             }
@@ -154,7 +148,14 @@
               # git is needed by stitch for changed-file detection
               git init && git add -A
 
-              tend run --mode full --phase verify --profile nix-check
+              cargo fmt --all --check
+              cargo check --workspace --all-targets
+              cargo clippy --quiet --workspace --all-targets -- -D warnings
+              cargo test --workspace
+              find modules -name '*.nix' -print0 | xargs -0 -r nixfmt --check
+              find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt --check
+              statix check
+              deadnix --fail --no-lambda-arg --no-lambda-pattern-names
 
               touch $out
             '';
@@ -178,15 +179,12 @@
       devShells.default = pkgs.mkShell {
         name = "phenix-stitch-dev";
         packages = [
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.rustfmt
-          pkgs.clippy
           pkgs.rust-analyzer
           pkgs.git
           pkgs.nix
           stitchCliPkg
-        ];
+        ]
+        ++ rustToolchain;
         shellHook = ''
           echo "phenix-stitch dev shell"
           echo "  cargo: $(cargo --version 2>/dev/null || echo '?')"

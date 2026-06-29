@@ -1325,6 +1325,7 @@ fn cmd_dag(mode: Option<&str>, split: Option<&str>, json: bool) -> Result<(), St
     let statuses = status::collect_all(&cfg)?;
 
     let mut nodes: Vec<serde_json::Value> = Vec::new();
+    let mut evidence_message: Option<&str> = None;
 
     for s in &statuses {
         if !s.is_dirty {
@@ -1399,11 +1400,33 @@ fn cmd_dag(mode: Option<&str>, split: Option<&str>, json: bool) -> Result<(), St
         }
     }
 
+    if mode == "full" && nodes.is_empty() {
+        let scope = exec::ExecutionScope {
+            selection: exec::SelectionMode::All,
+            explicit_nodes: Vec::new(),
+            closure: exec::ClosureMode::All,
+            order: exec::OrderMode::ProvidersFirst,
+        };
+        let evidence_nodes = exec::build_scope(&cfg, &scope)?;
+        for node in evidence_nodes {
+            nodes.push(serde_json::json!({
+                "id": format!("{}:topology", node.name),
+                "kind": "topology",
+                "repo": node.name,
+                "path": node.path,
+                "layer": node.layer,
+                "role": node.role,
+                "depends_on": []
+            }));
+        }
+        evidence_message = Some("No dirty repos; showing validated full topology evidence");
+    }
+
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "nodes": nodes, "total": nodes.len(), "mode": mode
+                "nodes": nodes, "total": nodes.len(), "mode": mode, "message": evidence_message
             }))
             .unwrap()
         );
@@ -1414,6 +1437,9 @@ fn cmd_dag(mode: Option<&str>, split: Option<&str>, json: bool) -> Result<(), St
             _ => "Commit DAG:",
         };
         println!("{}", title);
+        if let Some(message) = evidence_message {
+            println!("{}", message);
+        }
         println!();
         for (i, n) in nodes.iter().enumerate() {
             let kind = n["kind"].as_str().unwrap_or("?");
