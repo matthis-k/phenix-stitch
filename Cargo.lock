@@ -350,7 +350,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "phenix-mcp-core"
 version = "0.1.0"
-source = "git+https://github.com/matthis-k/phenix-tend#514610f18917fdbd8791fd49df682d8d2585dfcc"
+source = "git+https://github.com/matthis-k/phenix-tend#9b16fda280d93943ca550d5072d6c2fa7afb189f"
 dependencies = [
  "chrono",
  "serde",
@@ -552,7 +552,7 @@ dependencies = [
 [[package]]
 name = "tend"
 version = "0.1.0"
-source = "git+https://github.com/matthis-k/phenix-tend#514610f18917fdbd8791fd49df682d8d2585dfcc"
+source = "git+https://github.com/matthis-k/phenix-tend#9b16fda280d93943ca550d5072d6c2fa7afb189f"
 dependencies = [
  "globset",
  "serde",

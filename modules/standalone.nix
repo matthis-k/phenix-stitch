@@ -1,6 +1,11 @@
 { inputs, lib, ... }: {
   perSystem =
-    { config, pkgs, system, ... }:
+    {
+      config,
+      pkgs,
+      system,
+      ...
+    }:
     let
       filteredSrc = lib.cleanSource ../.;
 
@@ -8,7 +13,13 @@
         pname = "stitch";
         version = "0.1.0";
         src = filteredSrc;
-        cargoLock.lockFile = ../Cargo.lock;
+        cargoLock = {
+          lockFile = ../Cargo.lock;
+          outputHashes = {
+            "phenix-mcp-core-0.1.0" = "sha256-6XxX63SIZ8RgQRCvhHx1M5p1wkUAnCsDJawljTCRXIo=";
+            "tend-0.1.0" = "sha256-DotfuPsjXINPAA+YGxmu1B2JytHrbLi8SPIem14Y6pQ=";
+          };
+        };
         cargoBuildFlags = "-p stitch-cli";
         nativeBuildInputs = [ pkgs.git ];
       };
@@ -17,7 +28,13 @@
         pname = "stitch-mcp";
         version = "0.1.0";
         src = filteredSrc;
-        cargoLock.lockFile = ../Cargo.lock;
+        cargoLock = {
+          lockFile = ../Cargo.lock;
+          outputHashes = {
+            "phenix-mcp-core-0.1.0" = "sha256-6XxX63SIZ8RgQRCvhHx1M5p1wkUAnCsDJawljTCRXIo=";
+            "tend-0.1.0" = "sha256-DotfuPsjXINPAA+YGxmu1B2JytHrbLi8SPIem14Y6pQ=";
+          };
+        };
         cargoBuildFlags = "-p stitch-mcp";
         nativeBuildInputs = [ pkgs.git ];
       };
@@ -44,15 +61,10 @@
             chmod -R u+w source
             cd source
 
-            # Point cargo at the vendored dependencies
-            mkdir -p .cargo
-            cat > .cargo/config.toml <<EOF
-            [source.crates-io]
-            replace-with = "vendored-sources"
-
-            [source.vendored-sources]
-            directory = "${cargoDeps}"
-            EOF
+            # Reuse the buildRustPackage-generated Cargo config so git sources
+            # are replaced with the vendored source directory too.
+            cp -r ${cargoDeps}/.cargo .cargo
+            ln -s ${cargoDeps} cargo-vendor-dir
 
             ${cargoArgs}
 
@@ -134,15 +146,10 @@
               chmod -R u+w source
               cd source
 
-              # Point cargo at the vendored dependencies
-              mkdir -p .cargo
-              cat > .cargo/config.toml <<EOF
-              [source.crates-io]
-              replace-with = "vendored-sources"
-
-              [source.vendored-sources]
-              directory = "${cargoDeps}"
-              EOF
+              # Reuse the buildRustPackage-generated Cargo config so git sources
+              # are replaced with the vendored source directory too.
+              cp -r ${cargoDeps}/.cargo .cargo
+              ln -s ${cargoDeps} cargo-vendor-dir
 
               # git is needed by stitch for changed-file detection
               git init && git add -A
