@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "crates/stitch",
+  "crates/stitch-cli",
+  "crates/stitch-mcp",
+]
+resolver = "2"

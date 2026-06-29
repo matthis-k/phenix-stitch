@@ -1,0 +1,20 @@
+[package]
+name = "stitch"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+
+[lib]
+name = "stitch"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tend = { git = "https://github.com/matthis-k/phenix-tend" }
+
+[features]
+cli = []
+
+[dev-dependencies]
+tempfile = "3"
