@@ -36,12 +36,16 @@ fn run_exec_plan(
         order,
     };
     let plan = exec::build_plan(cfg, &scope, vec![step])?;
-    let opts = exec::RunOptions {
+    let opts = capture_exec_run_options();
+    exec::run_plan(cfg, &plan, &opts)
+}
+
+fn capture_exec_run_options() -> exec::RunOptions {
+    exec::RunOptions {
         dry_run: false,
         apply: false,
-        json: false,
-    };
-    exec::run_plan(cfg, &plan, &opts)
+        json: true,
+    }
 }
 
 fn collect_status_json(
@@ -1076,5 +1080,50 @@ impl McpTool for StitchSyncTool {
                 &audit_id,
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn read_only_exec_options_capture_step_output() {
+        let cfg = stitch::model::WorkspaceConfig {
+            version: 1,
+            workspace: "test".to_string(),
+            repos: Vec::new(),
+            config_dir: None,
+        };
+        let plan = exec::ExecutionPlan {
+            nodes: vec![exec::ExecutionNode {
+                name: "repo".to_string(),
+                path: PathBuf::from("/tmp"),
+                role: None,
+                layer: 0,
+                directly_selected: true,
+                directly_changed: false,
+                downstream_only: false,
+                steps: vec![exec::ExecutionStep {
+                    id: "emit".to_string(),
+                    mode: exec::ExecutionMode::ReadOnly,
+                    kind: exec::StepKind::Shell {
+                        argv: vec![
+                            "sh".to_string(),
+                            "-c".to_string(),
+                            "printf mcp-visible-output".to_string(),
+                        ],
+                    },
+                    condition: None,
+                }],
+            }],
+        };
+
+        let report = exec::run_plan(&cfg, &plan, &capture_exec_run_options()).unwrap();
+
+        let step = &report.node_results[0].step_results[0];
+        assert!(step.success);
+        assert_eq!(step.stdout, "mcp-visible-output");
     }
 }
