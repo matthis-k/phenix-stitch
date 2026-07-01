@@ -286,22 +286,8 @@ fn config_order(cfg: &WorkspaceConfig) -> Vec<String> {
     cfg.repos.iter().map(|r| r.name.clone()).collect()
 }
 
-type DependencyGraph = (
-    Vec<String>,
-    BTreeMap<String, Vec<String>>,
-    BTreeMap<String, Vec<String>>,
-);
-
-fn build_dependency_graph(cfg: &WorkspaceConfig) -> Result<DependencyGraph, String> {
-    let mut deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut dependents: BTreeMap<String, Vec<String>> = BTreeMap::new();
+fn load_canonical_graph(cfg: &WorkspaceConfig) -> Result<graph::CanonicalWorkspaceGraph, String> {
     let order = config_order(cfg);
-
-    for name in &order {
-        deps.entry(name.clone()).or_default();
-        dependents.entry(name.clone()).or_default();
-    }
-
     let root = cfg.config_dir.as_deref().ok_or_else(|| {
         "Cannot derive Stitch DAG: workspace config directory is unavailable".to_string()
     })?;
@@ -328,20 +314,16 @@ fn build_dependency_graph(cfg: &WorkspaceConfig) -> Result<DependencyGraph, Stri
         return Err(format!("Cannot use invalid Stitch DAG: {messages}"));
     }
 
-    for edge in dag.edges {
-        if !deps.contains_key(&edge.from) || !deps.contains_key(&edge.to) {
+    for edge in &dag.edges {
+        if !order.contains(&edge.from) || !order.contains(&edge.to) {
             return Err(format!(
                 "Canonical Stitch DAG edge references unknown configured node: {} -> {}",
                 edge.from, edge.to
             ));
         }
-        deps.entry(edge.from.clone())
-            .or_default()
-            .push(edge.to.clone());
-        dependents.entry(edge.to).or_default().push(edge.from);
     }
 
-    Ok((order, deps, dependents))
+    graph::CanonicalWorkspaceGraph::from_legacy(dag).map_err(|e| e.to_string())
 }
 
 pub struct HookInstallResult {
@@ -423,6 +405,7 @@ pub fn install_hooks_for_repo(
     })
 }
 
+#[cfg(test)]
 fn topological_sort(
     all_nodes: &[String],
     deps: &BTreeMap<String, Vec<String>>,
@@ -503,6 +486,7 @@ fn topological_sort(
     Ok(result)
 }
 
+#[cfg(test)]
 fn expand_closure(
     selected: &[String],
     closure: ClosureMode,
@@ -571,9 +555,7 @@ pub fn build_scope(
     let config_order = config_order(cfg);
     let all_names: Vec<String> = cfg.repos.iter().map(|r| r.name.clone()).collect();
     let statuses = status::collect_all(cfg)?;
-    let graph = build_dependency_graph(cfg)?;
-    let deps = graph.1;
-    let dependents = graph.2;
+    let canonical_graph = load_canonical_graph(cfg)?;
 
     let selected = match scope.selection {
         SelectionMode::All => all_names.clone(),
@@ -613,34 +595,21 @@ pub fn build_scope(
         }
     };
 
-    let closure_nodes = expand_closure(&selected, scope.closure, &all_names, &deps, &dependents);
-
-    let ordered = match scope.order {
-        OrderMode::Stable => {
-            let mut result: Vec<String> = Vec::new();
-            let closure_set: BTreeSet<&String> = closure_nodes.iter().collect();
-            for name in &config_order {
-                if closure_set.contains(name) {
-                    result.push(name.clone());
-                }
-            }
-            result
-        }
-        OrderMode::ProvidersFirst | OrderMode::ConsumersFirst => {
-            topological_sort(&closure_nodes, &deps, &config_order, scope.order)?
-        }
-    };
+    let planner = graph::DagPlanner::new(&canonical_graph);
+    let plan = planner.plan(&graph::DagPlanRequest {
+        selection: graph_selection_mode(scope.selection),
+        explicit_nodes: selected.clone(),
+        closure: graph_closure_mode(scope.closure),
+        order: graph_order_mode(scope.order),
+        stable_order: config_order.clone(),
+    })?;
+    let ordered: Vec<String> = plan.nodes.iter().map(|node| node.name.clone()).collect();
 
     let selected_set: BTreeSet<&String> = selected.iter().collect();
-    let downstream_set: BTreeSet<String> = expand_closure(
-        &selected,
-        ClosureMode::Downstream,
-        &all_names,
-        &deps,
-        &dependents,
-    )
-    .into_iter()
-    .collect();
+    let downstream_set: BTreeSet<String> = planner
+        .expand_closure(&selected, graph::PlanClosureMode::Downstream, &all_names)
+        .into_iter()
+        .collect();
 
     let changed_set: BTreeSet<String> = {
         let mut s = BTreeSet::new();
@@ -680,6 +649,34 @@ pub fn build_scope(
     }
 
     Ok(result)
+}
+
+fn graph_selection_mode(selection: SelectionMode) -> graph::PlanSelectionMode {
+    match selection {
+        SelectionMode::All => graph::PlanSelectionMode::All,
+        SelectionMode::Changed
+        | SelectionMode::Dirty
+        | SelectionMode::Current
+        | SelectionMode::Explicit => graph::PlanSelectionMode::Explicit,
+    }
+}
+
+fn graph_closure_mode(closure: ClosureMode) -> graph::PlanClosureMode {
+    match closure {
+        ClosureMode::SelfOnly => graph::PlanClosureMode::SelfOnly,
+        ClosureMode::Upstream => graph::PlanClosureMode::Upstream,
+        ClosureMode::Downstream => graph::PlanClosureMode::Downstream,
+        ClosureMode::Connected => graph::PlanClosureMode::Connected,
+        ClosureMode::All => graph::PlanClosureMode::All,
+    }
+}
+
+fn graph_order_mode(order: OrderMode) -> graph::PlanOrderMode {
+    match order {
+        OrderMode::Stable => graph::PlanOrderMode::Stable,
+        OrderMode::ProvidersFirst => graph::PlanOrderMode::ProvidersFirst,
+        OrderMode::ConsumersFirst => graph::PlanOrderMode::ConsumersFirst,
+    }
 }
 
 pub fn build_plan(
@@ -1216,7 +1213,7 @@ fn builtin_nix_update_inputs(
     };
 
     // Determine which inputs are upstream providers in the workspace DAG
-    let graph = match build_dependency_graph(cfg) {
+    let canonical_graph = match load_canonical_graph(cfg) {
         Ok(graph) => graph,
         Err(e) => {
             return StepResult {
@@ -1228,25 +1225,17 @@ fn builtin_nix_update_inputs(
             }
         }
     };
-    let deps = graph.1; // node -> providers
-    let upstream_names: std::collections::BTreeSet<String> = deps
-        .get(&node.name)
-        .map(|providers| {
-            let mut result: std::collections::BTreeSet<String> =
-                providers.iter().cloned().collect();
-            let mut queue = providers.clone();
-            while let Some(provider) = queue.pop() {
-                if let Some(transitive) = deps.get(&provider) {
-                    for t in transitive {
-                        if result.insert(t.clone()) {
-                            queue.push(t.clone());
-                        }
-                    }
-                }
-            }
-            result
-        })
-        .unwrap_or_default();
+    let planner = graph::DagPlanner::new(&canonical_graph);
+    let upstream_names: std::collections::BTreeSet<String> = planner
+        .expand_closure(
+            std::slice::from_ref(&node.name),
+            graph::PlanClosureMode::Upstream,
+            &config_order(cfg),
+        )
+        .into_iter()
+        .filter(|name| name != &node.name)
+        .collect();
+    let exact_direct_inputs = planner.exact_input_names_for_transitive_upstream(&node.name);
 
     // Build a reverse map from upstream repo path -> upstream name for path matching
     let root_dir = cfg.config_dir.as_deref().unwrap_or(Path::new("."));
@@ -1269,6 +1258,9 @@ fn builtin_nix_update_inputs(
         (Some(inputs), Some(lnodes)) => inputs
             .keys()
             .filter(|input_name| {
+                if exact_direct_inputs.values().any(|name| name == *input_name) {
+                    return true;
+                }
                 // Fast path: input name directly matches an upstream node name
                 if upstream_names.contains(*input_name) {
                     return true;

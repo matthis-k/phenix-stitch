@@ -1420,6 +1420,33 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_sync_uses_exact_flake_input_name() {
+        let mut graph = make_test_graph();
+        for edge in &mut graph.edges {
+            if edge.from == "shell" && edge.to == "tools" {
+                edge.input_name = "tools-via-custom-input".to_string();
+            }
+        }
+        let statuses = vec![
+            make_status("tools", true),
+            make_status("shell", false),
+            make_status("root", false),
+        ];
+        let cfg = WorkspaceConfig {
+            version: 1,
+            workspace: "test".to_string(),
+            repos: vec![],
+            config_dir: None,
+        };
+        let plan = plan_sync(&graph, &statuses, &cfg).unwrap();
+        let shell = plan.node_plans.get("shell").unwrap();
+        assert_eq!(
+            shell.dependencies_to_update[0].input_name,
+            "tools-via-custom-input"
+        );
+    }
+
+    #[test]
     fn test_plan_sync_dirty_shell() {
         let graph = make_test_graph();
         let statuses = vec![

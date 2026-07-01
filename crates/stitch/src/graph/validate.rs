@@ -254,6 +254,13 @@ pub fn validate_graph(graph: &WorkspaceDag, opts: &ValidateOptions) -> GraphVali
     }
 }
 
+pub fn validate_canonical_graph(
+    graph: &crate::graph::CanonicalWorkspaceGraph,
+    opts: &ValidateOptions,
+) -> GraphValidationReport {
+    validate_graph(&graph.to_legacy_dag(), opts)
+}
+
 fn validate_role_edge(
     from: &WorkspaceNode,
     to: &WorkspaceNode,
@@ -620,6 +627,19 @@ mod tests {
         let graph = make_graph(nodes, edges);
         let report = validate_graph(&graph, &ValidateOptions::default());
         assert!(report.valid);
+    }
+
+    #[test]
+    fn test_validate_canonical_graph_preserves_rule_coverage() {
+        let nodes = vec![
+            make_node_old("hosts", NodeKind::HostConsumer, Some(5), false),
+            make_node_old("pins", NodeKind::Pins, Some(0), false),
+        ];
+        let graph = make_graph(nodes, vec![make_edge("hosts", "pins")]);
+        let canonical = crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).unwrap();
+        let report = validate_canonical_graph(&canonical, &ValidateOptions::default());
+        assert!(report.valid);
+        assert_eq!(report.edge_count, 1);
     }
 
     #[test]

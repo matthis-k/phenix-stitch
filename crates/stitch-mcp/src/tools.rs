@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use phenix_mcp_core::mcp::{McpTool, ToolContext};
 use phenix_mcp_core::result::{ErrorKind, ToolFailure, ToolResult};
@@ -405,141 +405,26 @@ impl McpTool for StitchDagTool {
             }
         };
 
-        let statuses = collect_status_json(&cfg, &repo_filter).map_err(|e| {
+        let dag = stitch::graph::render::operation_dag_json(
+            &cfg,
+            mode,
+            split,
+            staged,
+            run_tend,
+            &repo_filter,
+        )
+        .map_err(|e| {
             mk_err(
                 ErrorKind::Internal,
-                &format!("DAG status discovery failed: {e}"),
+                &format!("DAG rendering failed: {e}"),
                 &audit_id,
             )
         })?;
-        let mut nodes: Vec<Value> = Vec::new();
-        let mut evidence_message: Option<&str> = None;
-
-        for s in &statuses {
-            let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let is_dirty = s.get("is_dirty").and_then(|v| v.as_bool()).unwrap_or(false);
-            if !is_dirty {
-                continue;
-            }
-
-            let repo_cfg = match cfg.repos.iter().find(|r| r.name == name) {
-                Some(r) => r,
-                None => continue,
-            };
-            let repo_path = repo_cfg.resolved_path(&cfg);
-            let diff = if staged {
-                stitch::git::git_diff_cached_names(&repo_path).unwrap_or_default()
-            } else {
-                stitch::git::git_diff_names(&repo_path).unwrap_or_default()
-            };
-
-            if run_tend && mode != "sync" {
-                nodes.push(json!({
-                    "id": format!("{}:precheck", name),
-                    "kind": "check",
-                    "repo": name,
-                    "command": ["tend", "run", "--changed"],
-                    "depends_on": []
-                }));
-            }
-
-            match split {
-                "by-path" => {
-                    let mut by_dir: HashMap<String, Vec<String>> = HashMap::new();
-                    for f in &diff {
-                        let dir = f
-                            .rfind('/')
-                            .map(|i| f[..i].to_string())
-                            .unwrap_or_else(|| "root".to_string());
-                        by_dir.entry(dir).or_default().push(f.clone());
-                    }
-                    for (dir, files) in &by_dir {
-                        let deps = if run_tend && mode != "sync" {
-                            vec![format!("{}:precheck", name)]
-                        } else {
-                            vec![]
-                        };
-                        nodes.push(json!({
-                            "id": format!("{}:{}", name, dir.replace('/', "_")),
-                            "kind": "commit",
-                            "repo": name,
-                            "files": files,
-                            "depends_on": deps
-                        }));
-                    }
-                }
-                _ => {
-                    let deps = if run_tend && mode != "sync" {
-                        vec![format!("{}:precheck", name)]
-                    } else {
-                        vec![]
-                    };
-                    nodes.push(json!({
-                        "id": format!("{}:commit", name),
-                        "kind": "commit",
-                        "repo": name,
-                        "files": diff,
-                        "depends_on": deps
-                    }));
-                }
-            }
-        }
-
-        if mode == "full" || mode == "sync" {
-            let commit_ids: Vec<String> = nodes
-                .iter()
-                .filter(|n| n["kind"] == "commit")
-                .filter_map(|n| n["id"].as_str().map(|s| s.to_string()))
-                .collect();
-
-            if !commit_ids.is_empty() {
-                let root_repo = cfg
-                    .repos
-                    .iter()
-                    .find(|r| r.name.contains("root") || r.name == "phenix");
-                if let Some(root) = root_repo {
-                    nodes.push(json!({
-                        "id": format!("{}:update-pins", root.name),
-                        "kind": "update-pins",
-                        "repo": root.name,
-                        "files": ["flake.lock"],
-                        "depends_on": commit_ids
-                    }));
-                }
-            }
-        }
-
-        if mode == "full" && nodes.is_empty() {
-            let scope = exec::ExecutionScope {
-                selection: exec::SelectionMode::All,
-                explicit_nodes: Vec::new(),
-                closure: exec::ClosureMode::All,
-                order: exec::OrderMode::ProvidersFirst,
-            };
-            let evidence_nodes = exec::build_scope(&cfg, &scope).map_err(|e| {
-                mk_err(
-                    ErrorKind::Internal,
-                    &format!("Topology evidence failed: {e}"),
-                    &audit_id,
-                )
-            })?;
-            for node in evidence_nodes {
-                nodes.push(json!({
-                    "id": format!("{}:topology", node.name),
-                    "kind": "topology",
-                    "repo": node.name,
-                    "path": node.path,
-                    "layer": node.layer,
-                    "role": node.role,
-                    "depends_on": []
-                }));
-            }
-            evidence_message = Some("No dirty repos; showing validated full topology evidence");
-        }
+        let total = dag.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
 
         let result = ToolResult::ok(
-            json!({ "nodes": nodes, "total": nodes.len(), "mode": mode, "message": evidence_message }),
-            format!("DAG: {} node(s) in {} mode", nodes.len(), mode),
+            dag,
+            format!("DAG: {} node(s) in {} mode", total, mode),
             &audit_id,
         );
         Ok(serde_json::to_value(&result).unwrap_or_default())

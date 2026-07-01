@@ -1,4 +1,5 @@
 use crate::graph::{validate::GraphValidationReport, WorkspaceDag};
+use crate::model::WorkspaceConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
@@ -36,6 +37,149 @@ pub fn render_order(
         RenderFormat::Text => render_order_text(order, graph),
         RenderFormat::Mermaid => render_order_mermaid(graph, order),
     }
+}
+
+pub fn operation_dag_json(
+    cfg: &WorkspaceConfig,
+    mode: &str,
+    split: &str,
+    staged: bool,
+    run_tend: bool,
+    repo_filter: &[String],
+) -> Result<serde_json::Value, String> {
+    let statuses = crate::status::collect_all(cfg)?;
+    let repo_filter: std::collections::BTreeSet<&String> = repo_filter.iter().collect();
+    let mut nodes: Vec<serde_json::Value> = Vec::new();
+    let mut evidence_message: Option<&str> = None;
+
+    for s in &statuses {
+        if !repo_filter.is_empty() && !repo_filter.contains(&s.name) {
+            continue;
+        }
+        if !s.is_dirty {
+            continue;
+        }
+        let repo_cfg = cfg.repos.iter().find(|r| r.name == s.name);
+        let diff = repo_cfg
+            .map(|r| {
+                let p = r.resolved_path(cfg);
+                if staged {
+                    crate::git::git_diff_cached_names(&p).unwrap_or_default()
+                } else {
+                    crate::git::git_diff_names(&p).unwrap_or_default()
+                }
+            })
+            .unwrap_or_default();
+
+        if run_tend && mode != "sync" {
+            nodes.push(serde_json::json!({
+                "id": format!("{}:precheck", s.name),
+                "kind": "check", "repo": s.name,
+                "command": ["tend", "run", "--changed"],
+                "depends_on": []
+            }));
+        }
+
+        match split {
+            "by-path" => {
+                let mut by_dir: std::collections::BTreeMap<String, Vec<String>> =
+                    std::collections::BTreeMap::new();
+                for f in &diff {
+                    let dir = f
+                        .rfind('/')
+                        .map(|i| f[..i].to_string())
+                        .unwrap_or_else(|| "root".to_string());
+                    by_dir.entry(dir).or_default().push(f.clone());
+                }
+                for (dir, files) in &by_dir {
+                    let deps = if run_tend && mode != "sync" {
+                        vec![format!("{}:precheck", s.name)]
+                    } else {
+                        vec![]
+                    };
+                    nodes.push(serde_json::json!({
+                        "id": format!("{}:{}", s.name, dir.replace('/', "_")),
+                        "kind": "commit", "repo": s.name, "files": files,
+                        "depends_on": deps
+                    }));
+                }
+            }
+            _ => {
+                let deps = if run_tend && mode != "sync" {
+                    vec![format!("{}:precheck", s.name)]
+                } else {
+                    vec![]
+                };
+                nodes.push(serde_json::json!({
+                    "id": format!("{}:commit", s.name),
+                    "kind": "commit", "repo": s.name, "files": diff,
+                    "depends_on": deps
+                }));
+            }
+        }
+    }
+
+    if mode == "full" || mode == "sync" {
+        let commit_ids: Vec<String> = nodes
+            .iter()
+            .filter(|n| n["kind"] == "commit")
+            .filter_map(|n| n["id"].as_str().map(str::to_string))
+            .collect();
+        if !commit_ids.is_empty() {
+            if let Some(root) = cfg
+                .repos
+                .iter()
+                .find(|r| r.name.contains("root") || r.name == "phenix")
+            {
+                nodes.push(serde_json::json!({
+                    "id": format!("{}:update-pins", root.name),
+                    "kind": "update-pins", "repo": root.name,
+                    "files": ["flake.lock"],
+                    "depends_on": commit_ids
+                }));
+            }
+        }
+    }
+
+    if mode == "full" && nodes.is_empty() {
+        let root = cfg
+            .config_dir
+            .as_deref()
+            .unwrap_or(std::path::Path::new("."));
+        let metadata = root.join(".stitch").join("topology.json");
+        let graph = crate::graph::derive::derive_graph_from_locks(root, Some(&metadata))
+            .map_err(|e| format!("Topology evidence failed: {e}"))?;
+        let canonical =
+            crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).map_err(|e| e.to_string())?;
+        let stable_order = cfg.repos.iter().map(|r| r.name.clone()).collect();
+        let plan =
+            crate::graph::DagPlanner::new(&canonical).plan(&crate::graph::DagPlanRequest {
+                selection: crate::graph::PlanSelectionMode::All,
+                explicit_nodes: Vec::new(),
+                closure: crate::graph::PlanClosureMode::All,
+                order: crate::graph::PlanOrderMode::ProvidersFirst,
+                stable_order,
+            })?;
+        for planned in plan.nodes {
+            if let Some(node) = canonical.node(&planned.name) {
+                nodes.push(serde_json::json!({
+                    "id": format!("{}:topology", planned.name),
+                    "kind": "topology",
+                    "repo": planned.name,
+                    "path": node.path,
+                    "layer": node.layer.unwrap_or(999),
+                    "role": format!("{:?}", node.role),
+                    "depends_on": []
+                }));
+            }
+        }
+        evidence_message = Some("No dirty repos; showing validated full topology evidence");
+    }
+
+    let total = nodes.len();
+    Ok(
+        serde_json::json!({ "nodes": nodes, "total": total, "mode": mode, "message": evidence_message }),
+    )
 }
 
 fn render_graph_text(graph: &WorkspaceDag) -> Result<String, String> {

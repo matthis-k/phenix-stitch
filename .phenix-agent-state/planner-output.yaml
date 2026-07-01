@@ -1,0 +1,398 @@
+status: planned
+summary: "Plan typed Stitch DAG generation strategy refactor without editing tracked source files."
+classification:
+  work_scope:
+    class: change
+    complexity: c4
+    risk: high
+    capabilities: {inspect: true, edit: false, agent_state_write: true, delete_untracked: false, delete_tracked: false, run_commands: true, commit: false, push: false, publish: false}
+    routing: {workflow: classify_and_dispatch, planner: required, architect: required, worker: after_architect, verifier: required_strict, committer: only_after_explicit_user_request}
+    invariants: [no_secret_changes, no_permission_weakening, no_unrelated_changes, no_public_api_change_unless_requested, no_test_or_verification_removal_unless_requested, preserve_repo_boundaries, preserve_declared_flake_outputs]
+    boundaries: {max_files_changed: 25, max_lines_changed: 2500}
+  selected_pipeline: dag_full_verified
+  required_verification_profile: full
+  required_dag_scope: affected
+preferred_transport:
+  tend: mcp_preferred_cli_allowed
+  stitch: mcp_preferred_cli_allowed
+codebase_memory:
+  used: true
+  reason: "Broad architecture orientation before file inspection."
+  findings:
+    - finding: "Existing graph subsystem is concentrated in crates/stitch/src/graph with derive, inventory, lock, render, topo, validate modules."
+    - finding: "Exec builds its own dependency maps and ordering in exec.rs; sync still uses legacy WorkspaceGraph from graph/mod.rs."
+    - finding: "CLI and MCP DAG inspection currently duplicate ad hoc DAG JSON construction instead of calling a shared planner."
+assumptions:
+  - id: A1
+    assumption: "Adding petgraph for StableDiGraph is acceptable as the minimal implementation of the requested canonical graph."
+    consequence_if_wrong: "Architect must require an in-house stable graph wrapper or documented alternative before implementation."
+  - id: A2
+    assumption: "The public shape of CLI/MCP JSON may be preserved while internal planning changes."
+    consequence_if_wrong: "Additional compatibility tests and possibly versioned output docs are required."
+  - id: A3
+    assumption: "Git-submodule strategy should discover workspace repo presence/gitlink facts, not become a generic graph source of semantic dependency edges beyond configured/submodule membership."
+    consequence_if_wrong: "Architecture decision needed for whether submodules define dependency edges."
+repo_facts:
+  - fact: "No repo-local AGENTS.md, docs/repo-goals.md, docs/architecture, knowledge, or CONTRIBUTING.md were present in phenix-stitch; root AGENTS.md governs."
+    source: "Read/glob inspection"
+  - fact: "Tend MCP reports one phenix-stitch config with 11 tasks; selected Rust files trigger rustfmt, cargo-check, clippy, cargo-test plus full nix checks under full profile."
+    source: "tend-mcp_tend_status and tend-mcp_tend_plan"
+  - fact: "Stitch MCP DAG accepted repo name phenix-stitch and reported the workspace topology; path-form repo argument failed as unknown node."
+    source: "stitch-mcp_stitch_dag / stitch-mcp_stitch_status"
+task_dag:
+  nodes:
+    - id: P0
+      kind: plan
+      executor: phenix-planner
+      dependencies: []
+      parallel_group: g0
+      mutates: false
+      expected_outputs: [{output: "planner-output.yaml, implementation-plan.yaml, planned-changes.yaml, run-ledger.yaml"}]
+    - id: A0
+      kind: agent_review
+      executor: phenix-architect
+      dependencies: [{node_id: P0}]
+      parallel_group: g1
+      mutates: false
+      expected_outputs: [{output: "architecture approval or correction for graph/planner layering and public API compatibility"}]
+    - id: I1
+      kind: implement
+      executor: phenix-worker
+      dependencies: [{node_id: A0}]
+      parallel_group: g2
+      mutates: true
+      expected_outputs: [{output: "typed strategy/draft/canonical/validator/planner modules with tests"}]
+    - id: I2
+      kind: implement
+      executor: phenix-worker
+      dependencies: [{node_id: A0}]
+      parallel_group: g2
+      mutates: true
+      expected_outputs: [{output: "exec/CLI/MCP DAG routes consume planner/canonical graph where feasible"}]
+    - id: I3
+      kind: implement
+      executor: phenix-worker
+      dependencies: [{node_id: A0}]
+      parallel_group: g2
+      mutates: true
+      expected_outputs: [{output: "sync adapter preserves ActionPlan behavior and exact input names"}]
+    - id: M0
+      kind: aggregate
+      executor: phenix-worker
+      dependencies: [{node_id: I1}, {node_id: I2}, {node_id: I3}]
+      parallel_group: g3
+      mutates: true
+      expected_outputs: [{output: "public exports and docs reconciled; no duplicate planner logic left in touched paths"}]
+    - id: N0
+      kind: normalize
+      executor: tend
+      dependencies: [{node_id: M0}]
+      parallel_group: g4
+      mutates: true
+      expected_outputs: [{output: "format fixes if needed"}]
+    - id: V0
+      kind: verify
+      executor: phenix-verifier
+      dependencies: [{node_id: N0}]
+      parallel_group: g5
+      mutates: false
+      expected_outputs: [{output: "full tend verification and plan-conformance report"}]
+    - id: AV0
+      kind: agent_review
+      executor: phenix-architecture-verifier
+      dependencies: [{node_id: V0}]
+      parallel_group: g6
+      mutates: false
+      expected_outputs: [{output: "final architecture contract verification"}]
+  edges:
+    - {from: P0, to: A0, reason: "c4 architecture-sensitive admission required"}
+    - {from: A0, to: I1, reason: "strategy/canonical graph design must be approved first"}
+    - {from: A0, to: I2, reason: "exec/MCP/CLI routing depends on approved planner boundary"}
+    - {from: A0, to: I3, reason: "sync adapter boundary depends on approved compatibility decision"}
+    - {from: I1, to: M0, reason: "shared graph layer must exist before final integration"}
+    - {from: I2, to: M0, reason: "entrypoint routing must converge"}
+    - {from: I3, to: M0, reason: "sync compatibility must converge"}
+    - {from: M0, to: N0, reason: "normalize after implementation"}
+    - {from: N0, to: V0, reason: "verify normalized diff"}
+    - {from: V0, to: AV0, reason: "c4 final architecture verification"}
+task_packet:
+  task_id: stitch-dag-generation-strategy-2026-07-01
+  scope:
+    in_scope:
+      - {item: "crates/stitch/src/graph/** strategy/draft/canonical/validator/planner refactor"}
+      - {item: "crates/stitch/src/exec.rs planner integration"}
+      - {item: "crates/stitch/src/sync.rs adapter/minimal compatibility only"}
+      - {item: "crates/stitch-cli/src/main.rs and crates/stitch-mcp/src/tools.rs DAG inspection routing"}
+      - {item: "tests and docs for DAG generation/planning behavior"}
+    out_of_scope:
+      - {item: "full interactive runner implementation"}
+      - {item: "full sync-commit recipe migration unless tiny/safe"}
+      - {item: "generic script/plugin DAG strategy"}
+      - {item: "MCP-owned graph semantics"}
+      - {item: "commits or pushes"}
+  accepted_decisions: []
+  escalation_triggers:
+    - {trigger: "Need to change CLI/MCP JSON contract beyond additive fields"}
+    - {trigger: "StableDiGraph/petgraph cannot be introduced cleanly"}
+    - {trigger: "Sync migration exceeds adapter/minimal compatibility"}
+    - {trigger: "Exact nix input names cannot be preserved from EdgeSpec/EdgeReason"}
+lease_recommendations:
+  - agent: phenix-architect
+    allowed_scope: ["review graph/planner API layering", "approve dependency direction and public compatibility"]
+    stop_if: ["architecture ambiguity needs user decision"]
+  - agent: phenix-worker
+    allowed_scope: ["tracked source/docs/tests within planned_changes only"]
+    stop_if: ["scope exceeds 25 files or 2500 LOC", "requires public API break", "requires tracked deletion"]
+  - agent: phenix-verifier
+    allowed_scope: ["mechanical verification", "plan conformance", "diff inspection"]
+    stop_if: ["verification failure not covered by plan"]
+implementation_plan:
+  - id: PC01
+    step: "Introduce typed graph data model and generation trait boundary."
+    files:
+      - {path: "crates/stitch/src/graph/spec.rs"}
+      - {path: "crates/stitch/src/graph/mod.rs"}
+      - {path: "crates/stitch/src/lib.rs"}
+    change: "Add NodeSpec, EdgeSpec, EdgeKind/metadata, WorkspaceGraphDraft, DagGenerationStrategy, GenerationContext, StrategyError; re-export stable public types."
+    reason: "Creates requested clean strategy input layer without embedding planning or execution decisions."
+    expected_diff_shape: "New module plus small mod/lib exports; existing WorkspaceDag may remain as compatibility alias/adapter during migration."
+  - id: PC02
+    step: "Add concrete flake-locks, git-submodules, and composite strategies."
+    files:
+      - {path: "crates/stitch/src/graph/strategy.rs"}
+      - {path: "crates/stitch/src/graph/derive.rs"}
+      - {path: "crates/stitch/src/graph/inventory.rs"}
+      - {path: "crates/stitch/src/graph/lock.rs"}
+    change: "Move lock derivation behind FlakeLocksStrategy, add GitSubmodulesStrategy for membership facts, add CompositeDagGenerationStrategy merge/dedup rules."
+    reason: "Separates graph fact discovery from validation and planning."
+    expected_diff_shape: "New strategy module; derive_graph_from_locks becomes a thin compatibility wrapper over FlakeLocksStrategy/canonicalization."
+  - id: PC03
+    step: "Implement canonical graph and validator over StableDiGraph."
+    files:
+      - {path: "crates/stitch/src/graph/canonical.rs"}
+      - {path: "crates/stitch/src/graph/validate.rs"}
+      - {path: "crates/stitch/Cargo.toml"}
+      - {path: "Cargo.lock"}
+    change: "Add CanonicalWorkspaceGraph backed by petgraph::stable_graph::StableDiGraph<NodeSpec, EdgeSpec>, deterministic node-id index maps, canonicalization errors, and DagValidator entrypoint that preserves current diagnostics."
+    reason: "Provides one validated graph representation for planner/entrypoints."
+    expected_diff_shape: "New canonical module, petgraph dependency, validate_graph adapter retained for old WorkspaceDag callers."
+  - id: PC04
+    step: "Add DagPlanner for closure/order/scope and StepProgram projection."
+    files:
+      - {path: "crates/stitch/src/graph/planner.rs"}
+      - {path: "crates/stitch/src/graph/topo.rs"}
+      - {path: "crates/stitch/src/exec.rs"}
+    change: "Centralize selection, upstream/downstream/connected/all closure, providers-first/consumers-first/stable order, and conversion to ExecutionPlan/ExecutionNode."
+    reason: "Planner owns traversal and ordering; exec only resolves statuses/steps and runs plans."
+    expected_diff_shape: "New planner module; exec build_dependency_graph/topological_sort/expand_closure collapse into calls/adapters."
+  - id: PC05
+    step: "Route CLI and MCP DAG inspection through canonical planner."
+    files:
+      - {path: "crates/stitch-cli/src/main.rs"}
+      - {path: "crates/stitch-mcp/src/tools.rs"}
+      - {path: "crates/stitch/src/graph/render.rs"}
+    change: "Make graph derive/verify/order and stitch.dag use shared strategy/canonical/planner APIs; preserve output fields and existing command names."
+    reason: "Removes duplicated DAG semantics and prevents MCP from defining graph semantics."
+    expected_diff_shape: "Entrypoint functions become thinner; output serialization may use helper structs from planner/render."
+  - id: PC06
+    step: "Preserve sync through adapter and exact input names."
+    files:
+      - {path: "crates/stitch/src/sync.rs"}
+      - {path: "crates/stitch/src/graph/planner.rs"}
+      - {path: "crates/stitch/src/graph/canonical.rs"}
+    change: "Add adapter from CanonicalWorkspaceGraph to legacy WorkspaceGraph or update plan_commit to read canonical edges while keeping ActionPlan/Action behavior. Ensure InputUpdate.input_name comes from EdgeSpec input_name, not repo name heuristics."
+    reason: "Meets non-goal by avoiding full sync recipe migration while correcting input update precision."
+    expected_diff_shape: "Small sync.rs adapter changes; no runner rewrite."
+  - id: PC07
+    step: "Add regression tests and architecture docs."
+    files:
+      - {path: "crates/stitch/src/graph/**"}
+      - {path: "crates/stitch/src/exec.rs"}
+      - {path: "crates/stitch/src/sync.rs"}
+      - {path: "crates/stitch-mcp/src/tools.rs"}
+      - {path: "crates/stitch-cli/src/main.rs"}
+      - {path: "docs/dag-generation-strategy.md"}
+    change: "Test strategy merge/dedup, canonical validation, provider-before-consumer planning, closure semantics, CLI/MCP DAG parity, and exact nix input names; document layering and non-goals."
+    reason: "Protects architecture contract and observable behavior."
+    expected_diff_shape: "Focused unit tests near modules plus one concise doc."
+planned_changes:
+  - id: PC01
+    files: [{path: "crates/stitch/src/graph/spec.rs"}, {path: "crates/stitch/src/graph/mod.rs"}, {path: "crates/stitch/src/lib.rs"}]
+    allowed_operations: [create, modify]
+    expected_behavior_change: "Typed draft graph objects are available for strategies; existing callers continue to compile."
+    expected_test_or_doc_change: "Unit tests for NodeSpec/EdgeSpec validation and deterministic merge keys."
+    forbidden_expansions: [{expansion: "Changing edge direction away from consumer -> provider"}]
+  - id: PC02
+    files: [{path: "crates/stitch/src/graph/strategy.rs"}, {path: "crates/stitch/src/graph/derive.rs"}, {path: "crates/stitch/src/graph/inventory.rs"}, {path: "crates/stitch/src/graph/lock.rs"}]
+    allowed_operations: [create, modify]
+    expected_behavior_change: "Lock-derived graph facts are produced through FlakeLocksStrategy; composite can add submodule membership facts without owning semantic dependencies."
+    expected_test_or_doc_change: "Tests for flake input EdgeSpec.input_name and composite dedup."
+    forbidden_expansions: [{expansion: "Generic script/plugin strategy"}, {expansion: "MCP-provided graph source"}]
+  - id: PC03
+    files: [{path: "crates/stitch/src/graph/canonical.rs"}, {path: "crates/stitch/src/graph/validate.rs"}, {path: "crates/stitch/Cargo.toml"}, {path: "Cargo.lock"}]
+    allowed_operations: [create, modify]
+    expected_behavior_change: "CanonicalWorkspaceGraph is backed by StableDiGraph and validated before planning."
+    expected_test_or_doc_change: "Cycle/layer/root/role validation tests run against canonical graph."
+    forbidden_expansions: [{expansion: "Replacing validation with best-effort warnings only"}]
+  - id: PC04
+    files: [{path: "crates/stitch/src/graph/planner.rs"}, {path: "crates/stitch/src/graph/topo.rs"}, {path: "crates/stitch/src/exec.rs"}]
+    allowed_operations: [create, modify]
+    expected_behavior_change: "Closure and ordering semantics are owned by DagPlanner and reused by exec."
+    expected_test_or_doc_change: "Provider-first, consumer-first, upstream/downstream/connected closure regression tests."
+    forbidden_expansions: [{expansion: "Runner or recipe owns graph traversal decisions"}]
+  - id: PC05
+    files: [{path: "crates/stitch-cli/src/main.rs"}, {path: "crates/stitch-mcp/src/tools.rs"}, {path: "crates/stitch/src/graph/render.rs"}]
+    allowed_operations: [modify]
+    expected_behavior_change: "CLI/MCP DAG inspection report planned nodes from shared planner while preserving existing field names."
+    expected_test_or_doc_change: "CLI/MCP unit tests or helper tests for DAG output parity."
+    forbidden_expansions: [{expansion: "Breaking existing command names or required JSON fields without architect/user approval"}]
+  - id: PC06
+    files: [{path: "crates/stitch/src/sync.rs"}, {path: "crates/stitch/src/graph/planner.rs"}, {path: "crates/stitch/src/graph/canonical.rs"}]
+    allowed_operations: [modify]
+    expected_behavior_change: "Sync planning still produces ActionPlan but input updates use exact flake input names from canonical edges."
+    expected_test_or_doc_change: "Sync test where repo name differs from flake input name."
+    forbidden_expansions: [{expansion: "Full sync-commit recipe migration"}]
+  - id: PC07
+    files: [{path: "docs/dag-generation-strategy.md"}, {path: "crates/stitch/src/graph/**"}, {path: "crates/stitch/src/exec.rs"}, {path: "crates/stitch/src/sync.rs"}]
+    allowed_operations: [create, modify]
+    expected_behavior_change: "No runtime behavior beyond documented, tested architecture contracts."
+    expected_test_or_doc_change: "New architecture doc and focused regression tests."
+    forbidden_expansions: [{expansion: "Removing or weakening existing tests/verification tasks"}]
+architecture_intent:
+  requires_architect_review: true
+  intended_patterns:
+    - pattern: "DagGenerationStrategy -> WorkspaceGraphDraft -> CanonicalWorkspaceGraph -> DagValidator -> DagPlanner -> ExecutionPlan/StepProgram/recipes"
+      rationale: "Each layer has one responsibility: discover facts, normalize, validate, plan traversal, execute actions."
+    - pattern: "StableDiGraph as canonical internal graph with deterministic id/index maps"
+      rationale: "Allows stable node references while preserving deterministic agent-facing output."
+  dependency_direction:
+    - {from: "strategies", to: "draft/canonical graph types", allowed: true, reason: "Strategies emit facts only."}
+    - {from: "planner", to: "canonical graph", allowed: true, reason: "Planner computes closure/order from validated graph."}
+    - {from: "exec/recipes/sync", to: "planner", allowed: true, reason: "Execution consumes plans, not graph internals."}
+    - {from: "graph generation", to: "exec/sync/tend actions", allowed: false, reason: "Generation must not decide execution or verification traversal."}
+    - {from: "MCP", to: "graph semantics ownership", allowed: false, reason: "MCP only exposes library semantics."}
+  module_boundaries:
+    - boundary: "crates/stitch/src/graph"
+      intended_rule: "Owns graph specs, generation strategies, canonicalization, validation, rendering, planning."
+    - boundary: "crates/stitch/src/exec.rs"
+      intended_rule: "Owns step applicability and running ExecutionPlan; delegates traversal/order to DagPlanner."
+    - boundary: "crates/stitch/src/sync.rs"
+      intended_rule: "May adapt canonical graph to existing ActionPlan; no broad recipe migration."
+  public_api_changes:
+    allowed:
+      - {change: "Additive exported graph/planner types and helper functions."}
+      - {change: "Additive JSON fields if needed for exact input names, preserving existing fields."}
+    forbidden:
+      - {change: "Removing current CLI/MCP commands or required JSON fields without user approval."}
+      - {change: "Changing consumer -> provider edge direction."}
+  test_strategy:
+    - strategy: "Unit-test each layer: strategy output, canonicalization, validation, planner closure/order, adapter behavior."
+    - strategy: "Regression-test exact nix input names where input name differs from dependency node id."
+    - strategy: "Keep tests semantic; do not assert incidental file layout beyond public module boundaries."
+  docs_config_expectations:
+    - expectation: "Add docs/dag-generation-strategy.md explaining layer ownership, edge direction, strategies, non-goals, and sync adapter."
+    - expectation: "If Cargo.toml gains petgraph, Cargo.lock must be updated by normal cargo resolution."
+  forbidden_architecture_drift:
+    - {drift: "Duplicate closure/topological-sort logic remains in exec, CLI, or MCP after planner integration."}
+    - {drift: "Strategies call git commit/push, nix update, tend, or runner APIs."}
+    - {drift: "Git-submodules strategy becomes authoritative source of dependency semantics."}
+verification_plan:
+  dag:
+    normalize:
+      logical_executor: tend
+      transport: mcp
+      scope: affected
+      order: dag
+      mutates: true
+    branches:
+      - id: lint_format
+        logical_executor: tend
+        transport: mcp
+        tend_profile: full
+        scope: affected
+        mutates: false
+      - id: unit_tests
+        logical_executor: tend
+        transport: mcp
+        tend_profile: full
+        scope: affected
+        mutates: false
+      - id: flake_check
+        logical_executor: tend
+        transport: mcp
+        tend_profile: full
+        scope: affected
+        mutates: false
+      - id: build
+        logical_executor: tend
+        transport: mcp
+        tend_profile: full
+        scope: affected
+        mutates: false
+    aggregate:
+      required: true
+  operations:
+    - id: tend-status
+      logical_executor: tend
+      transport_preference: mcp_first_cli_allowed
+      command_or_mcp_tool: "tend-mcp_tend_status(root=phenix-stitch)"
+      purpose: "Confirm verification contract."
+    - id: tend-plan-full
+      logical_executor: tend
+      transport_preference: mcp_first_cli_allowed
+      command_or_mcp_tool: "tend-mcp_tend_plan(mode=selected, phase=verify, files=planned Rust/Cargo/docs files)"
+      purpose: "Confirm checks selected before implementation and after diff exists."
+    - id: tend-fix
+      logical_executor: tend
+      transport_preference: mcp_first_cli_allowed
+      command_or_mcp_tool: "tend-mcp_tend_run(apply=true, phase=fix, mode=changed or selected)"
+      purpose: "Normalize formatting only after implementation."
+    - id: tend-verify-full
+      logical_executor: tend
+      transport_preference: mcp_first_cli_allowed
+      command_or_mcp_tool: "tend-mcp_tend_run(apply=true, phase=verify, mode=changed, output=full, timeout_seconds>=1200)"
+      purpose: "Run full repo verification because public graph/planner semantics and dependency topology are affected."
+    - id: stitch-dag-evidence
+      logical_executor: stitch
+      transport_preference: mcp_first_cli_allowed
+      command_or_mcp_tool: "stitch-mcp_stitch_dag(mode=full, repos=[phenix-stitch], json=true)"
+      purpose: "Record DAG/topology evidence; use repo name not absolute path."
+  architecture_questions:
+    - question: "Should petgraph be accepted as the StableDiGraph provider?"
+      expected_answer: "Yes, unless architect identifies a repository policy against new dependencies."
+    - question: "Should existing WorkspaceDag/WorkspaceGraph stay as compatibility facades for this change?"
+      expected_answer: "Yes, to avoid broad public API and sync rewrites."
+    - question: "What dependency semantics, if any, may GitSubmodulesStrategy infer?"
+      expected_answer: "Submodule membership/path facts only; flake locks/topology define dependency edges."
+risk_register:
+  - risk: "Public CLI/MCP output breaks downstream agents."
+    mitigation: "Preserve existing fields/commands and add compatibility tests."
+  - risk: "Two graph models drift during migration."
+    mitigation: "Make old APIs thin adapters over canonical graph or test parity."
+  - risk: "nix.updateInputs updates wrong lock input when input name differs from repo id."
+    mitigation: "Carry input_name in EdgeSpec and add mismatched-name regression tests."
+  - risk: "Refactor exceeds file/LOC boundary."
+    mitigation: "Stop and replan; keep sync and recipes as adapters."
+handoff_to_architect:
+  questions:
+    - question: "Approve the layer boundary and petgraph StableDiGraph dependency?"
+    - question: "Approve preserving legacy graph structs as compatibility adapters for this c4 slice?"
+    - question: "Confirm git-submodules strategy should not create semantic dependency edges except explicit metadata/config links."
+checkpoint_required: true
+
+repair_checkpoint_2026_07_01_lease_paths:
+  status: repaired
+  reason: "Implementer blocked because task-packet/lease paths conflicted with accepted planner artifacts."
+  authoritative_artifacts:
+    - ".phenix-agent-state/implementation-plan.yaml"
+    - ".phenix-agent-state/planned-changes.yaml"
+    - ".phenix-agent-state/handoff-implementer-repair.yaml"
+  architecture_changed: false
+  architect_re_review_required: false
+  dependency_fact: "petgraph is currently absent from crates/stitch/Cargo.toml and Cargo.lock; PC03 permits Cargo.lock update if petgraph is added through normal cargo resolution."
+  forbidden_task_packet_paths:
+    - "crates/stitch/src/graph/types.rs"
+    - "crates/stitch/src/graph/generate/*.rs"
+    - "crates/stitch/src/graph/normalize.rs"
+    - "crates/stitch/src/main.rs"
+    - "crates/stitch/src/mcp.rs"

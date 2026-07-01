@@ -1,0 +1,114 @@
+task_id: stitch-dag-generation-strategy-2026-07-01
+status: repaired
+authoritative: true
+supersedes:
+  - "Any task-packet or lease path list that names non-plan paths such as graph/types.rs, graph/generate/*.rs, graph/normalize.rs, crates/stitch/src/main.rs, or crates/stitch/src/mcp.rs."
+architecture_contract_status: "unchanged"
+architect_re_review_required: false
+current_dependency_fact:
+  petgraph_present_in_crates_stitch_manifest: false
+  petgraph_present_in_cargo_lock: false
+  cargo_lock_instruction: "Because petgraph is absent today, PC03 authorizes modifying Cargo.lock if crates/stitch/Cargo.toml gains petgraph; lockfile churn must be limited to normal cargo resolution for that dependency."
+planned_changes:
+  - id: PC01
+    allowed_files:
+      - path: "crates/stitch/src/graph/spec.rs"
+        allowed_operations: [create, modify]
+      - path: "crates/stitch/src/graph/mod.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/lib.rs"
+        allowed_operations: [modify]
+    acceptance: "Typed spec/draft/strategy boundary exists; no execution decisions in strategy types."
+    forbidden_expansions: ["Changing edge direction away from consumer -> provider."]
+  - id: PC02
+    allowed_files:
+      - path: "crates/stitch/src/graph/strategy.rs"
+        allowed_operations: [create, modify]
+      - path: "crates/stitch/src/graph/derive.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/inventory.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/lock.rs"
+        allowed_operations: [modify]
+    acceptance: "Flake lock, git-submodule, and composite strategies produce/merge typed draft facts; submodule facts are membership/path/gitlink facts only."
+    forbidden_expansions: ["Generic script/plugin strategy.", "MCP-provided graph source."]
+  - id: PC03
+    allowed_files:
+      - path: "crates/stitch/src/graph/canonical.rs"
+        allowed_operations: [create, modify]
+      - path: "crates/stitch/src/graph/validate.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/Cargo.toml"
+        allowed_operations: [modify]
+      - path: "Cargo.lock"
+        allowed_operations: [modify]
+    acceptance: "CanonicalWorkspaceGraph uses petgraph StableDiGraph; validation reports preserve current rule coverage; Cargo.lock changes only if dependency resolution requires them."
+    forbidden_expansions: ["Replacing validation with best-effort warnings only.", "Unrelated dependency churn."]
+  - id: PC04
+    allowed_files:
+      - path: "crates/stitch/src/graph/planner.rs"
+        allowed_operations: [create, modify]
+      - path: "crates/stitch/src/graph/topo.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/exec.rs"
+        allowed_operations: [modify]
+    acceptance: "DagPlanner owns closure/order; exec delegates graph traversal."
+    forbidden_expansions: ["Runner or recipe owns graph traversal decisions."]
+  - id: PC05
+    allowed_files:
+      - path: "crates/stitch-cli/src/main.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch-mcp/src/tools.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/render.rs"
+        allowed_operations: [modify]
+    acceptance: "CLI/MCP DAG inspection uses shared planner/render and preserves command names plus required JSON fields."
+    forbidden_expansions: ["Breaking existing command names or required JSON fields without architect/user approval."]
+  - id: PC06
+    allowed_files:
+      - path: "crates/stitch/src/sync.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/planner.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/canonical.rs"
+        allowed_operations: [modify]
+    acceptance: "Sync ActionPlan behavior remains; nix update input names are exact flake input names from graph edge metadata."
+    forbidden_expansions: ["Full sync-commit recipe migration."]
+  - id: PC07
+    allowed_files:
+      - path: "docs/dag-generation-strategy.md"
+        allowed_operations: [create, modify]
+      - path: "crates/stitch/src/graph/spec.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/strategy.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/canonical.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/planner.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/validate.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/topo.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/graph/render.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/exec.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch/src/sync.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch-cli/src/main.rs"
+        allowed_operations: [modify]
+      - path: "crates/stitch-mcp/src/tools.rs"
+        allowed_operations: [modify]
+    acceptance: "Inline/focused tests and docs cover the accepted architecture contract; no verification removal or weakening."
+    forbidden_expansions: ["Brittle tests that freeze incidental layout.", "Creating unplanned integration-test files without replanning."]
+global_forbidden_expansions:
+  - "Tracked deletion."
+  - "Commits or pushes."
+  - "Secrets/auth or permission changes."
+  - "Flake output topology changes."
+  - "Root workspace implementation changes."
+  - "Generic script/plugin DAG strategy."
+  - "MCP-owned graph semantics."
+  - "Full interactive runner or broad sync recipe migration."
+  - "Removing or weakening existing verification."

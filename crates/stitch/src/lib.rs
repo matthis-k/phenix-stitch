@@ -16,13 +16,23 @@ pub use exec::{
     StepResult,
 };
 pub use graph::{
+    canonical::{CanonicalWorkspaceGraph, CanonicalizeError},
     derive::derive_graph_from_locks,
     inventory::{discover_inventory, InventoryOptions},
     lock::parse_flake_lock,
+    planner::{
+        DagPlan, DagPlanRequest, DagPlanner, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
+        PlannedDagNode,
+    },
     render::RenderFormat,
+    spec::{
+        DagGenerationStrategy, EdgeKind, EdgeSpec, GenerationContext, NodeSpec, StrategyError,
+        WorkspaceGraphDraft,
+    },
     topo::provider_before_consumer_order,
     validate::{
-        validate_graph, DiagnosticSeverity, GraphDiagnostic, GraphValidationReport, ValidateOptions,
+        validate_canonical_graph, validate_graph, DiagnosticSeverity, GraphDiagnostic,
+        GraphValidationReport, ValidateOptions,
     },
     EdgeReason, ExternalInput, GraphSource, NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge,
     WorkspaceNode,

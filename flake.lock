@@ -154,11 +154,11 @@
         "nixpkgs-unstable": "nixpkgs-unstable"
       },
       "locked": {
-        "lastModified": 1782732354,
-        "narHash": "sha256-1+ahCz7odI7deS0V6N9et7kQ+6l0FZCrHxBhKTsRyik=",
+        "lastModified": 1782929457,
+        "narHash": "sha256-iUeKA0qVMkaK3pnP1511PYXK5LvwaxG9UbiiGLj1t0E=",
         "owner": "matthis-k",
         "repo": "phenix-pins",
-        "rev": "5ff50a9b8a00a3795df3fdc485e15de8ae62793a",
+        "rev": "685a05f5fa55ed1c84ae20e45e0e8394c11d8424",
         "type": "github"
       },
       "original": {

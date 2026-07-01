@@ -9,7 +9,6 @@ use stitch::config;
 use stitch::exec;
 use stitch::git;
 use stitch::recipe;
-use stitch::status;
 use stitch::sync;
 
 fn main() {
@@ -1322,114 +1321,17 @@ fn cmd_dag(mode: Option<&str>, split: Option<&str>, json: bool) -> Result<(), St
     let mode = mode.unwrap_or("commit");
     let split = split.unwrap_or("by-repo");
     let cfg = config::find_and_load()?;
-    let statuses = status::collect_all(&cfg)?;
-
-    let mut nodes: Vec<serde_json::Value> = Vec::new();
-    let mut evidence_message: Option<&str> = None;
-
-    for s in &statuses {
-        if !s.is_dirty {
-            continue;
-        }
-        let repo_cfg = cfg.repos.iter().find(|r| r.name == s.name);
-        let diff = repo_cfg
-            .map(|r| {
-                let p = r.resolved_path(&cfg);
-                git::git_diff_names(&p).unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        if mode != "sync" {
-            nodes.push(serde_json::json!({
-                "id": format!("{}:precheck", s.name),
-                "kind": "check", "repo": s.name,
-                "command": ["tend", "run", "--changed"],
-                "depends_on": []
-            }));
-        }
-
-        match split {
-            "by-path" => {
-                let mut by_dir: std::collections::HashMap<String, Vec<String>> =
-                    std::collections::HashMap::new();
-                for f in &diff {
-                    let dir = f
-                        .rfind('/')
-                        .map(|i| f[..i].to_string())
-                        .unwrap_or_else(|| "root".to_string());
-                    by_dir.entry(dir).or_default().push(f.clone());
-                }
-                for (dir, files) in &by_dir {
-                    nodes.push(serde_json::json!({
-                        "id": format!("{}:{}", s.name, dir.replace('/', "_")),
-                        "kind": "commit", "repo": s.name, "files": files,
-                        "depends_on": [format!("{}:precheck", s.name)]
-                    }));
-                }
-            }
-            _ => {
-                nodes.push(serde_json::json!({
-                    "id": format!("{}:commit", s.name),
-                    "kind": "commit", "repo": s.name, "files": diff,
-                    "depends_on": [format!("{}:precheck", s.name)]
-                }));
-            }
-        }
-    }
-
-    if mode == "full" || mode == "sync" {
-        let commit_ids: Vec<String> = nodes
-            .iter()
-            .filter(|n| n["kind"] == "commit")
-            .filter_map(|n| n["id"].as_str().map(|s| s.to_string()))
-            .collect();
-
-        if !commit_ids.is_empty() {
-            if let Some(root) = cfg
-                .repos
-                .iter()
-                .find(|r| r.name.contains("root") || r.name == "phenix")
-            {
-                nodes.push(serde_json::json!({
-                    "id": format!("{}:update-pins", root.name),
-                    "kind": "update-pins", "repo": root.name,
-                    "files": ["flake.lock"],
-                    "depends_on": commit_ids
-                }));
-            }
-        }
-    }
-
-    if mode == "full" && nodes.is_empty() {
-        let scope = exec::ExecutionScope {
-            selection: exec::SelectionMode::All,
-            explicit_nodes: Vec::new(),
-            closure: exec::ClosureMode::All,
-            order: exec::OrderMode::ProvidersFirst,
-        };
-        let evidence_nodes = exec::build_scope(&cfg, &scope)?;
-        for node in evidence_nodes {
-            nodes.push(serde_json::json!({
-                "id": format!("{}:topology", node.name),
-                "kind": "topology",
-                "repo": node.name,
-                "path": node.path,
-                "layer": node.layer,
-                "role": node.role,
-                "depends_on": []
-            }));
-        }
-        evidence_message = Some("No dirty repos; showing validated full topology evidence");
-    }
+    let dag =
+        stitch::graph::render::operation_dag_json(&cfg, mode, split, false, mode != "sync", &[])?;
+    let nodes = dag
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let evidence_message = dag.get("message").and_then(|v| v.as_str());
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "nodes": nodes, "total": nodes.len(), "mode": mode, "message": evidence_message
-            }))
-            .unwrap()
-        );
+        println!("{}", serde_json::to_string_pretty(&dag).unwrap());
     } else {
         let title = match mode {
             "sync" => "Sync DAG:",

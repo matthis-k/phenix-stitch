@@ -1,0 +1,108 @@
+task_id: stitch-dag-generation-strategy-2026-07-01
+status: repaired
+repair_reason: "Implementer blocked on conflicting task-packet file lease; this artifact is now the authoritative implementation plan for allowed tracked-file changes."
+architecture_contract_status: "unchanged; remains accepted"
+architect_re_review_required: false
+notes:
+  - "Use actual repository paths only. Do not use graph/types.rs, graph/generate/*.rs, graph/normalize.rs, crates/stitch/src/main.rs, or crates/stitch/src/mcp.rs; those paths are not part of this plan."
+  - "Current inspection found petgraph absent from crates/stitch/Cargo.toml and Cargo.lock, so adding the accepted petgraph dependency requires modifying both crates/stitch/Cargo.toml and Cargo.lock through normal cargo resolution."
+implementation_plan:
+  - id: PC01
+    step: "Introduce typed graph data model and DagGenerationStrategy boundary."
+    files:
+      - path: "crates/stitch/src/graph/spec.rs"
+        operation: create
+      - path: "crates/stitch/src/graph/mod.rs"
+        operation: modify
+      - path: "crates/stitch/src/lib.rs"
+        operation: modify
+    change: "Add NodeSpec, EdgeSpec, EdgeKind/metadata, WorkspaceGraphDraft, DagGenerationStrategy, GenerationContext, StrategyError; re-export additively."
+    acceptance: "Typed spec/draft/strategy boundary exists; strategies contain graph facts only and no execution decisions."
+  - id: PC02
+    step: "Implement FlakeLocksStrategy, GitSubmodulesStrategy, and CompositeDagGenerationStrategy."
+    files:
+      - path: "crates/stitch/src/graph/strategy.rs"
+        operation: create
+      - path: "crates/stitch/src/graph/derive.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/inventory.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/lock.rs"
+        operation: modify
+    change: "Move lock derivation behind FlakeLocksStrategy; add GitSubmodulesStrategy for repo membership/path/gitlink facts only; add composite merge/dedup rules."
+    acceptance: "Flake-lock and composite strategies produce typed draft facts; submodule strategy does not infer semantic dependency edges."
+  - id: PC03
+    step: "Implement CanonicalWorkspaceGraph and DagValidator over StableDiGraph."
+    files:
+      - path: "crates/stitch/src/graph/canonical.rs"
+        operation: create
+      - path: "crates/stitch/src/graph/validate.rs"
+        operation: modify
+      - path: "crates/stitch/Cargo.toml"
+        operation: modify
+      - path: "Cargo.lock"
+        operation: modify
+    change: "Add CanonicalWorkspaceGraph backed by petgraph::stable_graph::StableDiGraph<NodeSpec, EdgeSpec>, deterministic id/index maps, canonicalization errors, and validation adapter preserving current diagnostics."
+    acceptance: "Canonical graph uses StableDiGraph; validation rule coverage remains; Cargo.lock changes are limited to normal petgraph dependency resolution."
+  - id: PC04
+    step: "Implement DagPlanner and integrate exec build_scope/build_plan."
+    files:
+      - path: "crates/stitch/src/graph/planner.rs"
+        operation: create
+      - path: "crates/stitch/src/graph/topo.rs"
+        operation: modify
+      - path: "crates/stitch/src/exec.rs"
+        operation: modify
+    change: "Centralize selection, upstream/downstream/connected/all closure, provider-first/consumer-first/stable ordering, and ExecutionPlan/ExecutionNode projection."
+    acceptance: "DagPlanner owns traversal/order; exec owns status, step applicability, and running plans only."
+  - id: PC05
+    step: "Route CLI and MCP DAG inspection through planner/canonical graph."
+    files:
+      - path: "crates/stitch-cli/src/main.rs"
+        operation: modify
+      - path: "crates/stitch-mcp/src/tools.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/render.rs"
+        operation: modify
+    change: "Make CLI cmd_dag and MCP stitch.dag consume shared core graph/planner/render APIs while preserving commands and required JSON fields."
+    acceptance: "No MCP-owned DAG semantics; existing CLI/MCP output compatibility is preserved except additive fields."
+  - id: PC06
+    step: "Preserve sync through a minimal adapter and exact input names."
+    files:
+      - path: "crates/stitch/src/sync.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/planner.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/canonical.rs"
+        operation: modify
+    change: "Keep ActionPlan/Action behavior compatible; ensure InputUpdate.input_name comes from EdgeSpec/EdgeReason flake input metadata rather than repo-name heuristics."
+    acceptance: "Sync remains adapter/minimal; mismatched repo-id/input-name case is covered."
+  - id: PC07
+    step: "Add focused regression tests and architecture docs."
+    files:
+      - path: "docs/dag-generation-strategy.md"
+        operation: create
+      - path: "crates/stitch/src/graph/spec.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/strategy.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/canonical.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/planner.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/validate.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/topo.rs"
+        operation: modify
+      - path: "crates/stitch/src/graph/render.rs"
+        operation: modify
+      - path: "crates/stitch/src/exec.rs"
+        operation: modify
+      - path: "crates/stitch/src/sync.rs"
+        operation: modify
+      - path: "crates/stitch-cli/src/main.rs"
+        operation: modify
+      - path: "crates/stitch-mcp/src/tools.rs"
+        operation: modify
+    change: "Add inline/focused regression tests in touched modules plus concise docs/dag-generation-strategy.md."
+    acceptance: "Tests/docs cover strategy merge/dedup, canonical validation, closure/order, CLI/MCP parity, sync adapter, and exact input names without asserting incidental layout."

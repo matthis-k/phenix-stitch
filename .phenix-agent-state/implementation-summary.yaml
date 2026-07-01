@@ -1,0 +1,309 @@
+status: implemented
+summary: "Implemented typed DAG generation strategy layer, canonical StableDiGraph graph, planner-owned traversal/order, shared DAG rendering for CLI/MCP, sync input-name regression coverage, and docs. Full tend verification is blocked only by policy-created untracked new source files being absent from Nix clean-source flake checks; raw cargo tests pass."
+task_id: stitch-dag-generation-strategy-2026-07-01
+lease:
+  allowed_scope:
+    - crates/stitch/src/graph/spec.rs
+    - crates/stitch/src/graph/mod.rs
+    - crates/stitch/src/lib.rs
+    - crates/stitch/src/graph/strategy.rs
+    - crates/stitch/src/graph/derive.rs
+    - crates/stitch/src/graph/inventory.rs
+    - crates/stitch/src/graph/lock.rs
+    - crates/stitch/src/graph/canonical.rs
+    - crates/stitch/src/graph/validate.rs
+    - crates/stitch/Cargo.toml
+    - Cargo.lock
+    - crates/stitch/src/graph/planner.rs
+    - crates/stitch/src/graph/topo.rs
+    - crates/stitch/src/exec.rs
+    - crates/stitch-cli/src/main.rs
+    - crates/stitch-mcp/src/tools.rs
+    - crates/stitch/src/graph/render.rs
+    - crates/stitch/src/sync.rs
+    - docs/dag-generation-strategy.md
+    - .phenix-agent-state/implementation-summary.yaml
+  respected: true
+implemented_changes:
+  - planned_change_id: PC01
+    files:
+      - path: crates/stitch/src/graph/spec.rs
+      - path: crates/stitch/src/graph/mod.rs
+      - path: crates/stitch/src/lib.rs
+    actual_change: "Added NodeSpec/EdgeSpec/EdgeKind, WorkspaceGraphDraft, generation trait/context/error, and public exports."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+  - planned_change_id: PC02
+    files:
+      - path: crates/stitch/src/graph/strategy.rs
+      - path: crates/stitch/src/graph/derive.rs
+    actual_change: "Added flake-lock, git-submodule membership, and composite strategies; derive_graph_from_locks is now a FlakeLocksStrategy compatibility wrapper."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+  - planned_change_id: PC03
+    files:
+      - path: crates/stitch/src/graph/canonical.rs
+      - path: crates/stitch/src/graph/validate.rs
+      - path: crates/stitch/Cargo.toml
+      - path: Cargo.lock
+    actual_change: "Added CanonicalWorkspaceGraph over petgraph StableDiGraph, validation adapter, petgraph dependency, and normal lockfile resolution."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+  - planned_change_id: PC04
+    files:
+      - path: crates/stitch/src/graph/planner.rs
+      - path: crates/stitch/src/graph/topo.rs
+      - path: crates/stitch/src/exec.rs
+    actual_change: "Added DagPlanner closure/order APIs; topo and exec build_scope delegate active traversal/order to planner."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+  - planned_change_id: PC05
+    files:
+      - path: crates/stitch-cli/src/main.rs
+      - path: crates/stitch-mcp/src/tools.rs
+      - path: crates/stitch/src/graph/render.rs
+    actual_change: "Moved shared DAG inspection rendering into graph/render and routed CLI/MCP DAG output through it while preserving fields."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+  - planned_change_id: PC06
+    files:
+      - path: crates/stitch/src/sync.rs
+      - path: crates/stitch/src/graph/planner.rs
+      - path: crates/stitch/src/graph/canonical.rs
+      - path: crates/stitch/src/exec.rs
+    actual_change: "Kept sync ActionPlan behavior and added exact flake input-name regression; exec nix.updateInputs now consults planner/canonical edge metadata before fallback matching."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+  - planned_change_id: PC07
+    files:
+      - path: docs/dag-generation-strategy.md
+      - path: crates/stitch/src/graph/spec.rs
+      - path: crates/stitch/src/graph/strategy.rs
+      - path: crates/stitch/src/graph/canonical.rs
+      - path: crates/stitch/src/graph/planner.rs
+      - path: crates/stitch/src/graph/validate.rs
+      - path: crates/stitch/src/graph/topo.rs
+      - path: crates/stitch/src/graph/render.rs
+      - path: crates/stitch/src/exec.rs
+      - path: crates/stitch/src/sync.rs
+    actual_change: "Added focused unit/regression tests and architecture documentation for layering, edge direction, planner order, and exact input names."
+    matches_plan: true
+    deviation: null
+    reason_for_deviation: null
+changed_files:
+  - path: Cargo.lock
+    planned_change_ids: [PC03]
+    changes: "Normal cargo resolution for petgraph/fixedbitset."
+  - path: crates/stitch/Cargo.toml
+    planned_change_ids: [PC03]
+    changes: "Added petgraph dependency."
+  - path: crates/stitch/src/graph/spec.rs
+    planned_change_ids: [PC01, PC07]
+    changes: "New typed specs/draft/trait plus tests."
+  - path: crates/stitch/src/graph/strategy.rs
+    planned_change_ids: [PC02, PC07]
+    changes: "New concrete and composite generation strategies plus tests."
+  - path: crates/stitch/src/graph/canonical.rs
+    planned_change_ids: [PC03, PC06, PC07]
+    changes: "New canonical StableDiGraph graph and adapters."
+  - path: crates/stitch/src/graph/planner.rs
+    planned_change_ids: [PC04, PC06, PC07]
+    changes: "New DagPlanner closure/order/input-name helpers plus tests."
+  - path: crates/stitch/src/graph/mod.rs
+    planned_change_ids: [PC01]
+    changes: "Added modules and re-exports."
+  - path: crates/stitch/src/lib.rs
+    planned_change_ids: [PC01]
+    changes: "Added public exports."
+  - path: crates/stitch/src/graph/derive.rs
+    planned_change_ids: [PC02]
+    changes: "Compatibility wrapper over FlakeLocksStrategy."
+  - path: crates/stitch/src/graph/topo.rs
+    planned_change_ids: [PC04, PC07]
+    changes: "Provider order delegates to canonical graph and DagPlanner."
+  - path: crates/stitch/src/graph/validate.rs
+    planned_change_ids: [PC03, PC07]
+    changes: "Added canonical validation adapter and parity test."
+  - path: crates/stitch/src/graph/render.rs
+    planned_change_ids: [PC05, PC07]
+    changes: "Added shared operation DAG JSON rendering."
+  - path: crates/stitch/src/exec.rs
+    planned_change_ids: [PC04, PC06, PC07]
+    changes: "Active scope/order uses DagPlanner; nix.updateInputs prefers exact edge metadata."
+  - path: crates/stitch/src/sync.rs
+    planned_change_ids: [PC06, PC07]
+    changes: "Added exact input-name regression coverage."
+  - path: crates/stitch-cli/src/main.rs
+    planned_change_ids: [PC05, PC07]
+    changes: "cmd_dag delegates to shared render helper."
+  - path: crates/stitch-mcp/src/tools.rs
+    planned_change_ids: [PC05, PC07]
+    changes: "StitchDagTool delegates to shared render helper."
+  - path: docs/dag-generation-strategy.md
+    planned_change_ids: [PC07]
+    changes: "New architecture documentation."
+architecture_contract_observations:
+  - contract_item_id: INV_EDGE_DIRECTION
+    observation: "EdgeSpec and planner tests keep semantic edges consumer -> provider and project providers first."
+    appears_satisfied: true
+  - contract_item_id: INV_STRATEGY_FACTS_ONLY
+    observation: "Strategies emit WorkspaceGraphDraft facts only; no commit/push/tend/nix update semantics were added there."
+    appears_satisfied: true
+  - contract_item_id: INV_STABLE_CANONICAL_GRAPH
+    observation: "CanonicalWorkspaceGraph stores petgraph::stable_graph::StableDiGraph<NodeSpec, EdgeSpec>."
+    appears_satisfied: true
+  - contract_item_id: INV_PLANNER_OWNS_TRAVERSAL
+    observation: "Active exec/topo scope/order and shared DAG rendering consume DagPlanner/canonical graph."
+    appears_satisfied: true
+  - contract_item_id: INV_SYNC_ADAPTER_ONLY
+    observation: "sync ActionPlan execution was not rewritten; only tests and exact input-name coverage were added."
+    appears_satisfied: true
+  - contract_item_id: INV_EXACT_INPUT_NAMES
+    observation: "Input names are carried on EdgeSpec and tested with mismatched repo/input names."
+    appears_satisfied: true
+  - contract_item_id: INV_MCP_THIN_WRAPPER
+    observation: "MCP DAG delegates to shared render helper instead of owning duplicate DAG construction."
+    appears_satisfied: true
+deviations_from_plan: []
+blockers:
+  - blocker: "tend verify nix-flake-check fails because new source files are untracked and therefore absent from the Nix clean source used by cargo-fmt; worker policy forbids staging files."
+commands_run:
+  - command: git status --short
+    logical_executor: raw
+    transport: raw
+    result: passed
+    notes: "Initial status showed only untracked .phenix-agent-state/."
+  - command: cargo test -p stitch graph
+    logical_executor: raw
+    transport: cli
+    result: passed
+    notes: "39 graph tests passed after implementation."
+  - command: cargo test
+    logical_executor: raw
+    transport: cli
+    result: passed
+    notes: "Full cargo test passed: 100 stitch, 3 CLI, 1 MCP test."
+  - command: cargo fmt
+    logical_executor: raw
+    transport: cli
+    result: failed
+    notes: "cargo-fmt component unavailable in shell."
+  - command: rustfmt --edition 2021 <touched files>
+    logical_executor: raw
+    transport: cli
+    result: failed
+    notes: "rustfmt binary unavailable in shell."
+  - command: tend_status(root=phenix-stitch)
+    logical_executor: tend
+    transport: mcp
+    result: passed
+    notes: "Found phenix-stitch tend config."
+  - command: tend_run(mode=changed, phase=fix)
+    logical_executor: tend
+    transport: mcp
+    result: passed
+    notes: "1 fix check passed."
+  - command: tend_run(mode=changed, phase=verify)
+    logical_executor: tend
+    transport: mcp
+    result: failed
+    notes: "First run: clippy and nix-flake-check failed; clippy fixed."
+  - command: tend_run(mode=changed, phase=verify)
+    logical_executor: tend
+    transport: mcp
+    result: failed
+    notes: "Second run: 7 passed, nix-flake-check failed because untracked new modules are absent from Nix clean-source cargo-fmt build."
+  - command: stitch_dag(mode=full, repos=[phenix-stitch], run_tend=false)
+    logical_executor: stitch
+    transport: mcp
+    result: passed
+    notes: "DAG evidence reported phenix-stitch commit node and phenix update-pins node."
+tend:
+  transport: mcp
+  mcp_tool: tend-mcp_tend_run
+  profile: full
+  passed: false
+  notes:
+    - "cargo test passes locally."
+    - "tend verify is blocked by untracked new planned source files not being included in Nix clean source; staging is disallowed for this worker."
+stitch:
+  transport: mcp
+  mcp_tool: stitch-mcp_stitch_dag
+  scope: affected
+  order: dag
+  affected_nodes:
+    - phenix-stitch
+    - phenix
+  passed: true
+  notes:
+    - "Read-only DAG evidence collected; no commit/push/sync performed."
+checkpoint:
+  status: partial
+  files_inspected:
+    - .phenix-agent-state/request.md
+    - .phenix-agent-state/planner-output.yaml
+    - .phenix-agent-state/implementation-plan.yaml
+    - .phenix-agent-state/planned-changes.yaml
+    - .phenix-agent-state/architecture-review.yaml
+    - .phenix-agent-state/architecture-contract.yaml
+    - .phenix-agent-state/handoff-implementer-repair.yaml
+    - crates/stitch/src/graph/mod.rs
+    - crates/stitch/src/graph/derive.rs
+    - crates/stitch/src/graph/inventory.rs
+    - crates/stitch/src/graph/lock.rs
+    - crates/stitch/src/graph/validate.rs
+    - crates/stitch/src/graph/topo.rs
+    - crates/stitch/src/graph/render.rs
+    - crates/stitch/src/exec.rs
+    - crates/stitch/src/sync.rs
+    - crates/stitch-cli/src/main.rs
+    - crates/stitch-mcp/src/tools.rs
+    - crates/stitch/src/lib.rs
+    - crates/stitch/Cargo.toml
+  files_changed:
+    - Cargo.lock
+    - crates/stitch/Cargo.toml
+    - crates/stitch/src/graph/spec.rs
+    - crates/stitch/src/graph/strategy.rs
+    - crates/stitch/src/graph/canonical.rs
+    - crates/stitch/src/graph/planner.rs
+    - crates/stitch/src/graph/mod.rs
+    - crates/stitch/src/lib.rs
+    - crates/stitch/src/graph/derive.rs
+    - crates/stitch/src/graph/topo.rs
+    - crates/stitch/src/graph/validate.rs
+    - crates/stitch/src/graph/render.rs
+    - crates/stitch/src/exec.rs
+    - crates/stitch/src/sync.rs
+    - crates/stitch-cli/src/main.rs
+    - crates/stitch-mcp/src/tools.rs
+    - docs/dag-generation-strategy.md
+    - .phenix-agent-state/implementation-summary.yaml
+  findings:
+    - "Implementation stayed within allowed file list and planned change IDs."
+    - "Cargo.lock changed for petgraph/fixedbitset only as normal dependency resolution."
+    - "Raw cargo test passes across the workspace."
+  failures:
+    - "tend nix-flake-check cannot see untracked new files without staging/tracking them."
+  recommended_next_route: "verifier; if strict tend verification is required before verification, route to a role allowed to stage/track new files or run Nix check after files are tracked."
+  confidence: 0.82
+handoff_to_verifier:
+  required_context:
+    - .phenix-agent-state/request.md
+    - .phenix-agent-state/planner-output.yaml
+    - .phenix-agent-state/implementation-plan.yaml
+    - .phenix-agent-state/planned-changes.yaml
+    - .phenix-agent-state/architecture-review.yaml
+    - .phenix-agent-state/architecture-contract.yaml
+    - .phenix-agent-state/implementation-summary.yaml
+  suggested_commands:
+    - command: cargo test
+      purpose: "Confirm local compile/tests including untracked planned new files."
+    - command: tend run --mode changed --phase verify --output summary
+      purpose: "Re-run full changed-scope verification after new planned files are tracked or staged by an authorized role."

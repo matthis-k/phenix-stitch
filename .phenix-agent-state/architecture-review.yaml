@@ -1,0 +1,112 @@
+task_id: stitch-dag-generation-strategy-2026-07-01
+role: phenix-architect
+status: accepted
+reviewed_at: 2026-07-01
+scope:
+  repo: /home/matthisk/phenix/flakes/02-producers/phenix-stitch
+  artifacts_reviewed:
+    - .phenix-agent-state/request.md
+    - .phenix-agent-state/planner-output.yaml
+    - .phenix-agent-state/implementation-plan.yaml
+    - .phenix-agent-state/planned-changes.yaml
+  code_inspected:
+    - crates/stitch/src/graph/mod.rs
+    - crates/stitch/src/graph/derive.rs
+    - crates/stitch/src/graph/validate.rs
+    - crates/stitch/src/graph/topo.rs
+    - crates/stitch/src/exec.rs
+    - crates/stitch/src/sync.rs
+    - crates/stitch-cli/src/main.rs
+    - crates/stitch-mcp/src/tools.rs
+    - crates/stitch/src/lib.rs
+    - crates/stitch/Cargo.toml
+    - docs/guardrails.md
+    - docs/migration.md
+admission_decision:
+  result: accepted
+  rationale:
+    - "The plan keeps the change in phenix-stitch, which owns stitch/sync tooling under the Phenix migration ownership table."
+    - "The proposed layer sequence separates graph fact discovery, canonicalization, validation, traversal planning, and execution."
+    - "The current code has duplicated traversal/operation-DAG logic in exec.rs, CLI DAG, and MCP DAG; centralizing closure/order in DagPlanner is architecturally justified."
+    - "Using petgraph::stable_graph::StableDiGraph for CanonicalWorkspaceGraph satisfies the requested canonical graph constraint without conflicting with inspected repo policy."
+    - "Keeping WorkspaceDag/WorkspaceGraph as compatibility facades/adapters is acceptable for this slice because it prevents a broad public API and sync recipe rewrite."
+accepted_assumptions:
+  A1_petgraph: "Accepted: add petgraph to crates/stitch/Cargo.toml and update Cargo.lock through normal cargo resolution."
+  A2_public_json_compat: "Accepted only if existing CLI/MCP commands and required JSON fields remain compatible; additive fields are allowed."
+  A3_git_submodules_strategy: "Accepted only for repo presence/path/gitlink/membership facts; it must not infer semantic dependency edges unless those edges are explicitly represented by flake/topology metadata."
+required_constraints:
+  edge_direction: "All semantic dependency edges remain consumer -> provider. Provider-first order is a planner projection over those edges."
+  strategy_boundary: "DagGenerationStrategy implementations may discover facts and emit WorkspaceGraphDraft only; they must not call or own commit, push, nix update, Tend traversal, recipe execution, status mutation, or StepProgram semantics."
+  canonical_graph: "CanonicalWorkspaceGraph must be backed by petgraph::stable_graph::StableDiGraph<NodeSpec, EdgeSpec> unless implementation stops for re-approval with a documented reason."
+  planner_ownership: "DagPlanner owns selection closure, upstream/downstream/connected/all traversal, stable/providers-first/consumers-first ordering, and projections needed by exec/recipes/DAG views."
+  execution_ownership: "exec.rs, recipes, sync execution, and runner paths own step applicability and actions only; they consume planner output rather than rebuilding dependency maps/toposort/closure where feasible."
+  sync_boundary: "sync.rs migration is adapter/minimal in this first pass; ActionPlan/Action behavior remains compatible and full sync-commit recipe migration is forbidden."
+  exact_input_names: "InputUpdate.input_name and nix.updateInputs must use the flake input name carried by EdgeSpec/EdgeReason, not repo-name heuristics."
+  mcp_boundary: "MCP tools are thin wrappers over core graph/planner/render results and must not define independent graph semantics or operation ordering."
+  compatibility: "Existing CLI/MCP command names and required JSON fields must be preserved unless user/architect explicitly approves a breaking change."
+  verification: "No test, check, hook, or verification task may be removed or weakened to make the refactor pass."
+allowed_implementation_boundaries:
+  files_allowed_by_plan:
+    - crates/stitch/src/graph/spec.rs
+    - crates/stitch/src/graph/strategy.rs
+    - crates/stitch/src/graph/canonical.rs
+    - crates/stitch/src/graph/planner.rs
+    - crates/stitch/src/graph/mod.rs
+    - crates/stitch/src/graph/derive.rs
+    - crates/stitch/src/graph/inventory.rs
+    - crates/stitch/src/graph/lock.rs
+    - crates/stitch/src/graph/validate.rs
+    - crates/stitch/src/graph/topo.rs
+    - crates/stitch/src/graph/render.rs
+    - crates/stitch/src/exec.rs
+    - crates/stitch/src/sync.rs
+    - crates/stitch/src/lib.rs
+    - crates/stitch-cli/src/main.rs
+    - crates/stitch-mcp/src/tools.rs
+    - crates/stitch/Cargo.toml
+    - Cargo.lock
+    - docs/dag-generation-strategy.md
+  allowed_operations: [create, modify]
+  allowed_public_changes:
+    - "Additive exported graph/planner/spec types and helpers."
+    - "Additive JSON fields needed for planner evidence or exact input-name reporting, while preserving current fields."
+  forbidden_operations:
+    - "Tracked deletion."
+    - "Commits or pushes."
+    - "Changing flake output topology or workspace repo boundaries."
+    - "Generic script/plugin DAG strategy."
+    - "Full interactive runner implementation."
+    - "Broad sync recipe rewrite."
+    - "MCP-owned graph semantics."
+    - "Changing consumer -> provider edge direction."
+    - "Removing or weakening verification."
+architecture_risks:
+  - risk: "Dual graph models can drift during migration."
+    mitigation: "Make legacy WorkspaceDag/WorkspaceGraph thin adapters over canonical graph or add parity tests around affected public paths."
+  - risk: "CLI/MCP DAG JSON consumers may break."
+    mitigation: "Preserve field names and commands; add parity/compatibility tests."
+  - risk: "exec.rs may retain dependency maps, topological sort, and closure logic."
+    mitigation: "Verifier must inspect for duplicated traversal remaining in touched paths and require explicit justification for any residual compatibility shim."
+  - risk: "nix input updates can target wrong input when input name differs from repo id."
+    mitigation: "Carry exact input_name on EdgeSpec and test mismatched repo/input names."
+stop_or_replan_triggers:
+  - "Need to break existing CLI/MCP JSON or command contract beyond additive fields."
+  - "petgraph StableDiGraph cannot be added cleanly."
+  - "sync.rs changes grow beyond adapter/minimal compatibility."
+  - "GitSubmodulesStrategy needs to infer semantic dependency edges."
+  - "Exact flake input names cannot be carried from lock-derived edge metadata."
+  - "Implementation exceeds planned file/LOC boundaries materially."
+verifier_architecture_checks:
+  - "Confirm all semantic graph edges remain consumer -> provider and tests cover provider-before-consumer projection."
+  - "Confirm DagGenerationStrategy implementations emit draft facts only and do not import/call exec, sync execution, recipe runner, tend, git commit/push, or nix update action paths."
+  - "Confirm CanonicalWorkspaceGraph uses petgraph::stable_graph::StableDiGraph<NodeSpec, EdgeSpec> and deterministic id/index maps."
+  - "Confirm DagPlanner owns closure and order; exec.rs/CLI/MCP do not retain independent dependency-map/toposort/closure implementations except documented transitional adapters."
+  - "Confirm sync.rs remains adapter/minimal and ActionPlan/Action semantics remain compatible."
+  - "Confirm InputUpdate.input_name and nix update paths use EdgeSpec/EdgeReason flake input names, with a mismatched input-name regression test."
+  - "Confirm MCP DAG and CLI DAG call shared core graph/planner/render APIs and preserve existing response fields."
+  - "Confirm docs/dag-generation-strategy.md documents layer ownership, edge direction, strategy limits, sync adapter, and non-goals."
+  - "Confirm no root workspace feature implementation, unrelated repo changes, permission weakening, secret changes, tracked deletions, or verification removal occurred."
+notes:
+  - "Current code evidence: exec.rs contains build_dependency_graph, topological_sort, expand_closure, and builtin nix.updateInputs path matching; these are valid migration targets for planner/input-name integration."
+  - "Current code evidence: CLI cmd_dag and MCP StitchDagTool duplicate ad hoc operation DAG JSON construction; routing them through shared planner/render is in scope."
+  - "Current code evidence: sync.rs currently consumes legacy WorkspaceGraph and already carries DependencyEdge.input_name; preserving it as adapter/facade is suitable for this pass."

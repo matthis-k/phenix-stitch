@@ -6,20 +6,35 @@ use serde::{Deserialize, Serialize};
 use crate::git;
 use crate::model::WorkspaceConfig;
 
+pub mod canonical;
 pub mod derive;
 pub mod inventory;
 pub mod lock;
+pub mod planner;
 pub mod render;
+pub mod spec;
+pub mod strategy;
 pub mod topo;
 pub mod validate;
 
+pub use canonical::{CanonicalWorkspaceGraph, CanonicalizeError};
 pub use derive::derive_graph_from_locks;
 pub use inventory::{discover_inventory, InventoryOptions, WorkspaceDiscovery};
 pub use lock::parse_flake_lock;
+pub use planner::{
+    DagPlan, DagPlanRequest, DagPlanner, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
+    PlannedDagNode,
+};
 pub use render::RenderFormat;
+pub use spec::{
+    DagGenerationStrategy, EdgeKind, EdgeSpec, GenerationContext, NodeSpec, StrategyError,
+    WorkspaceGraphDraft,
+};
+pub use strategy::{CompositeDagGenerationStrategy, FlakeLocksStrategy, GitSubmodulesStrategy};
 pub use topo::provider_before_consumer_order;
 pub use validate::{
-    validate_graph, DiagnosticSeverity, GraphDiagnostic, GraphValidationReport, ValidateOptions,
+    validate_canonical_graph, validate_graph, DiagnosticSeverity, GraphDiagnostic,
+    GraphValidationReport, ValidateOptions,
 };
 
 // ---------------------------------------------------------------------------

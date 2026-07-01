@@ -1,5 +1,7 @@
-use std::collections::BTreeMap;
-
+use crate::graph::canonical::CanonicalWorkspaceGraph;
+use crate::graph::planner::{
+    DagPlanRequest, DagPlanner, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
+};
 use crate::graph::WorkspaceDag;
 
 #[derive(Debug)]
@@ -25,73 +27,22 @@ impl std::error::Error for TopoError {}
 /// 2. All nodes with indegree 0 (no dependencies) are ready.
 /// 3. Process in ascending layer, then ascending id order.
 pub fn provider_before_consumer_order(graph: &WorkspaceDag) -> Result<Vec<String>, TopoError> {
-    let mut indegree: BTreeMap<String, usize> = BTreeMap::new();
-    let mut outgoing: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    for node_id in graph.nodes.keys() {
-        indegree.entry(node_id.clone()).or_insert(0);
-        outgoing.entry(node_id.clone()).or_default();
-    }
-
-    for edge in &graph.edges {
-        let consumer = &edge.from;
-        let provider = &edge.to;
-
-        outgoing
-            .entry(provider.clone())
-            .or_default()
-            .push(consumer.clone());
-        *indegree.entry(consumer.clone()).or_insert(0) += 1;
-    }
-
-    // Ready nodes: indegree 0, sorted by (layer, id)
-    let mut ready: Vec<String> = indegree
-        .iter()
-        .filter(|(_, &deg)| deg == 0)
-        .map(|(id, _)| id.clone())
-        .collect();
-
-    sort_ready(&mut ready, graph);
-
-    let mut out = Vec::new();
-
-    while let Some(node) = ready.first().cloned() {
-        ready.retain(|n| n != &node);
-        out.push(node.clone());
-
-        if let Some(consumers) = outgoing.get(&node) {
-            for consumer in consumers {
-                if let Some(deg) = indegree.get_mut(consumer) {
-                    *deg -= 1;
-                    if *deg == 0 {
-                        ready.push(consumer.clone());
-                    }
-                }
-            }
-        }
-
-        sort_ready(&mut ready, graph);
-    }
-
-    if out.len() != graph.nodes.len() {
-        let cycle_nodes: Vec<String> = graph
-            .nodes
-            .keys()
-            .filter(|id| !out.contains(id))
-            .cloned()
-            .collect();
-        return Err(TopoError { cycle_nodes });
-    }
-
-    Ok(out)
-}
-
-fn sort_ready(ready: &mut [String], graph: &WorkspaceDag) {
-    ready.sort_by(|a, b| {
-        let layer_a = graph.nodes.get(a).and_then(|n| n.layer).unwrap_or(u32::MAX);
-        let layer_b = graph.nodes.get(b).and_then(|n| n.layer).unwrap_or(u32::MAX);
-        layer_a.cmp(&layer_b).then_with(|| a.cmp(b))
-    });
+    let canonical = CanonicalWorkspaceGraph::from_legacy(graph.clone()).map_err(|e| TopoError {
+        cycle_nodes: vec![e.to_string()],
+    })?;
+    let stable_order = graph.nodes.keys().cloned().collect();
+    let plan = DagPlanner::new(&canonical)
+        .plan(&DagPlanRequest {
+            selection: PlanSelectionMode::All,
+            explicit_nodes: Vec::new(),
+            closure: PlanClosureMode::All,
+            order: PlanOrderMode::ProvidersFirst,
+            stable_order,
+        })
+        .map_err(|e| TopoError {
+            cycle_nodes: vec![e],
+        })?;
+    Ok(plan.nodes.into_iter().map(|node| node.name).collect())
 }
 
 #[cfg(test)]
