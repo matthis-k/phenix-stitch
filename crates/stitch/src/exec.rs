@@ -1190,28 +1190,47 @@ fn resolve_tend_command(repo_path: &std::path::Path) -> (String, Vec<String>) {
             // Try to resolve tend from the flake
             let tend_flake_path = fp.join("#tend");
             let check = std::process::Command::new("nix")
-                .args(["run", &tend_flake_path.to_string_lossy(), "--", "check", "--help"])
+                .args([
+                    "run",
+                    &tend_flake_path.to_string_lossy(),
+                    "--",
+                    "check",
+                    "--help",
+                ])
                 .current_dir(repo_path)
                 .output();
             if check.map(|o| o.status.success()).unwrap_or(false) {
-                return ("nix".to_string(), vec![
-                    "run".to_string(),
-                    tend_flake_path.to_string_lossy().to_string(),
-                    "--".to_string(),
-                ]);
+                return (
+                    "nix".to_string(),
+                    vec![
+                        "run".to_string(),
+                        tend_flake_path.to_string_lossy().to_string(),
+                        "--".to_string(),
+                    ],
+                );
             }
             // Try .#default devshell
             let check_dev = std::process::Command::new("nix")
-                .args(["develop", fp.to_string_lossy().as_ref(), "--command", "tend", "check", "--help"])
+                .args([
+                    "develop",
+                    fp.to_string_lossy().as_ref(),
+                    "--command",
+                    "tend",
+                    "check",
+                    "--help",
+                ])
                 .current_dir(repo_path)
                 .output();
             if check_dev.map(|o| o.status.success()).unwrap_or(false) {
-                return ("nix".to_string(), vec![
-                    "develop".to_string(),
-                    fp.to_string_lossy().to_string(),
-                    "--command".to_string(),
-                    "tend".to_string(),
-                ]);
+                return (
+                    "nix".to_string(),
+                    vec![
+                        "develop".to_string(),
+                        fp.to_string_lossy().to_string(),
+                        "--command".to_string(),
+                        "tend".to_string(),
+                    ],
+                );
             }
         }
     }
@@ -1248,11 +1267,12 @@ pub struct DirtyNodeInfo {
 /// Generated/ignored files (like `.pre-commit-config.yaml`) are classified
 /// as non-meaningful and do not require a commit message.
 pub fn classify_dirty_node(path: &std::path::Path) -> DirtyNodeInfo {
-    let name = path.file_name()
+    let name = path
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
-    
+
     let mut has_meaningful = false;
     let mut has_generated = false;
     let has_ignored = false;
@@ -1269,21 +1289,24 @@ pub fn classify_dirty_node(path: &std::path::Path) -> DirtyNodeInfo {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             let line = line.trim();
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
             let status_code = &line[..2];
             let file_path = line[3..].trim().to_string();
-            
+
             let is_generated = file_path.ends_with(".pre-commit-config.yaml")
                 || file_path.contains(".git/hooks/")
                 || file_path.starts_with("result");
-            
-            let staged = status_code.contains('M') || status_code.contains('A') || status_code.contains('D');
-            
+
+            let staged =
+                status_code.contains('M') || status_code.contains('A') || status_code.contains('D');
+
             if status_code == "??" {
                 has_untracked = true;
                 untracked_files.push(file_path.clone());
             }
-            
+
             if staged || status_code != "??" {
                 has_staged = has_staged || staged;
                 if is_generated {
