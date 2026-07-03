@@ -527,6 +527,7 @@ impl McpTool for StitchCommitTool {
         json!({
             "apply": { "type": "boolean", "description": "Must be true to execute" },
             "dry_run": { "type": "boolean", "description": "Plan mode (no mutations)" },
+            "scope": { "type": "array", "items": {"type": "string"}, "description": "Repo names to commit (empty = all changed)" },
             "no_push": { "type": "boolean", "description": "Commit locally without pushing" },
             "force": { "type": "boolean", "description": "Allow edge cases like detached HEAD" },
             "messages": {
@@ -562,6 +563,16 @@ impl McpTool for StitchCommitTool {
             .get("force")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let scope_repos: Vec<String> = input
+            .get("scope")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         if !apply && !dry_run {
             return Err(mk_err(
@@ -582,11 +593,20 @@ impl McpTool for StitchCommitTool {
             }
         };
 
-        let scope = exec::ExecutionScope {
-            selection: exec::SelectionMode::Changed,
-            explicit_nodes: Vec::new(),
-            closure: exec::ClosureMode::Connected,
-            order: exec::OrderMode::ProvidersFirst,
+        let scope = if scope_repos.is_empty() {
+            exec::ExecutionScope {
+                selection: exec::SelectionMode::Changed,
+                explicit_nodes: Vec::new(),
+                closure: exec::ClosureMode::Connected,
+                order: exec::OrderMode::ProvidersFirst,
+            }
+        } else {
+            exec::ExecutionScope {
+                selection: exec::SelectionMode::Explicit,
+                explicit_nodes: scope_repos.clone(),
+                closure: exec::ClosureMode::Connected,
+                order: exec::OrderMode::ProvidersFirst,
+            }
         };
 
         let raw_nodes = match exec::build_scope(&cfg, &scope) {
@@ -602,6 +622,8 @@ impl McpTool for StitchCommitTool {
 
         let dirty_nodes: Vec<&exec::ExecutionNode> =
             raw_nodes.iter().filter(|n| n.directly_changed).collect();
+        // When scope_repos is specified, ExecutionScope::Explicit with scope_repos
+        // ensures only those repos are selected; the dirty filter respects that.
 
         if dirty_nodes.is_empty() && dry_run {
             let out = ToolResult::ok(
@@ -758,6 +780,7 @@ impl McpTool for StitchSyncTool {
         json!({
             "apply": { "type": "boolean", "description": "Must be true to execute" },
             "dry_run": { "type": "boolean", "description": "Plan mode (no mutations)" },
+            "scope": { "type": "array", "items": {"type": "string"}, "description": "Repo names to sync (empty = all changed)" },
             "repos": { "type": "array", "items": {"type": "string"} },
             "mode": { "type": "string", "enum": ["pull", "push", "full"] },
             "run_tend": { "type": "boolean", "description": "Run tend checks before sync" },

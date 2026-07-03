@@ -1148,7 +1148,10 @@ fn builtin_tend_check(node: &ExecutionNode, args: &serde_json::Value) -> StepRes
         cmd_args.push("--affected-dag");
     }
 
-    let output = std::process::Command::new("tend")
+    // Try flake-resolved tend first, then fallback to ambient PATH
+    let tend_cmd = resolve_tend_command(&node.path);
+    let output = std::process::Command::new(&tend_cmd.0)
+        .args(&tend_cmd.1.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
         .args(&cmd_args)
         .current_dir(&node.path)
         .output();
@@ -1167,6 +1170,142 @@ fn builtin_tend_check(node: &ExecutionNode, args: &serde_json::Value) -> StepRes
             stdout: String::new(),
             stderr: format!("tend check failed: {e}"),
         },
+    }
+}
+
+/// Resolve tend command, preferring flake-based resolution over ambient PATH.
+/// Returns (program, extra_args) where extra_args are for nix run, etc.
+fn resolve_tend_command(repo_path: &std::path::Path) -> (String, Vec<String>) {
+    // Strategy 1: try `nix run` from root flake
+    // Look for flake.nix in repo path or parent directories
+    let flake_path = find_flake_root(repo_path);
+    if let Some(fp) = flake_path {
+        // Check if nix is available
+        if std::process::Command::new("nix")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            // Try to resolve tend from the flake
+            let tend_flake_path = fp.join("#tend");
+            let check = std::process::Command::new("nix")
+                .args(["run", &tend_flake_path.to_string_lossy(), "--", "check", "--help"])
+                .current_dir(repo_path)
+                .output();
+            if check.map(|o| o.status.success()).unwrap_or(false) {
+                return ("nix".to_string(), vec![
+                    "run".to_string(),
+                    tend_flake_path.to_string_lossy().to_string(),
+                    "--".to_string(),
+                ]);
+            }
+            // Try .#default devshell
+            let check_dev = std::process::Command::new("nix")
+                .args(["develop", fp.to_string_lossy().as_ref(), "--command", "tend", "check", "--help"])
+                .current_dir(repo_path)
+                .output();
+            if check_dev.map(|o| o.status.success()).unwrap_or(false) {
+                return ("nix".to_string(), vec![
+                    "develop".to_string(),
+                    fp.to_string_lossy().to_string(),
+                    "--command".to_string(),
+                    "tend".to_string(),
+                ]);
+            }
+        }
+    }
+    // Strategy 2: ambient PATH (original behavior)
+    ("tend".to_string(), vec![])
+}
+
+fn find_flake_root(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut current = Some(path);
+    while let Some(dir) = current {
+        if dir.join("flake.nix").exists() {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+/// Classify dirty nodes by type of dirt
+#[derive(Debug, Clone, Serialize)]
+pub struct DirtyNodeInfo {
+    pub name: String,
+    pub is_dirty: bool,
+    pub has_meaningful_changes: bool,
+    pub has_generated_changes: bool,
+    pub has_ignored_pattern_changes: bool,
+    pub has_staged_changes: bool,
+    pub has_untracked_files: bool,
+    pub generated_files: Vec<String>,
+    pub untracked_files: Vec<String>,
+}
+
+/// Classify the dirt in a repository node.
+/// Generated/ignored files (like `.pre-commit-config.yaml`) are classified
+/// as non-meaningful and do not require a commit message.
+pub fn classify_dirty_node(path: &std::path::Path) -> DirtyNodeInfo {
+    let name = path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    
+    let mut has_meaningful = false;
+    let mut has_generated = false;
+    let has_ignored = false;
+    let mut has_staged = false;
+    let mut has_untracked = false;
+    let mut generated_files = Vec::new();
+    let mut untracked_files = Vec::new();
+
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(path)
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            let status_code = &line[..2];
+            let file_path = line[3..].trim().to_string();
+            
+            let is_generated = file_path.ends_with(".pre-commit-config.yaml")
+                || file_path.contains(".git/hooks/")
+                || file_path.starts_with("result");
+            
+            let staged = status_code.contains('M') || status_code.contains('A') || status_code.contains('D');
+            
+            if status_code == "??" {
+                has_untracked = true;
+                untracked_files.push(file_path.clone());
+            }
+            
+            if staged || status_code != "??" {
+                has_staged = has_staged || staged;
+                if is_generated {
+                    has_generated = true;
+                    generated_files.push(file_path);
+                } else {
+                    has_meaningful = true;
+                }
+            }
+        }
+    }
+
+    DirtyNodeInfo {
+        name,
+        is_dirty: has_meaningful || has_generated || has_untracked,
+        has_meaningful_changes: has_meaningful,
+        has_generated_changes: has_generated,
+        has_ignored_pattern_changes: has_ignored,
+        has_staged_changes: has_staged,
+        has_untracked_files: has_untracked,
+        generated_files,
+        untracked_files,
     }
 }
 

@@ -2,3 +2,4 @@
 result
 .cache
 .phenix-agent-state/
+.pre-commit-config.yaml
