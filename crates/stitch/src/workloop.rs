@@ -365,10 +365,7 @@ pub fn valid_actions_for_state(state: &LoopState) -> Vec<LoopAction> {
             LoopAction::FinalizeDryRun,
             LoopAction::Abandon,
         ],
-        LoopState::Blocked => vec![
-            LoopAction::Handoff,
-            LoopAction::Abandon,
-        ],
+        LoopState::Blocked => vec![LoopAction::Handoff, LoopAction::Abandon],
         LoopState::ReadyToFinalize => vec![
             LoopAction::FinalizeApply,
             LoopAction::FinalizeDryRun,
@@ -436,7 +433,16 @@ impl Timestamp {
             } else {
                 28
             },
-            31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
         ];
         let mut month = 1u64;
         for &md in &month_days {
@@ -569,12 +575,7 @@ pub trait LoopBackend: std::fmt::Debug {
     fn snapshot(&self, repo: &Path, name: &str) -> Result<SnapshotRef, String>;
 
     /// Create a checkpoint (resumable local development point).
-    fn checkpoint(
-        &self,
-        repo: &Path,
-        name: &str,
-        message: &str,
-    ) -> Result<CheckpointRef, String>;
+    fn checkpoint(&self, repo: &Path, name: &str, message: &str) -> Result<CheckpointRef, String>;
 
     /// Get the current change identity for a repo.
     fn current_change(&self, repo: &Path, name: &str) -> Result<ChangeRef, String>;
@@ -693,7 +694,10 @@ impl LoopBackend for JjBackend {
             (false, true) => BackendState::GitOnly,
             (false, false) => BackendState::None,
         };
-        Ok(DetectionResult { state, jj_version: version })
+        Ok(DetectionResult {
+            state,
+            jj_version: version,
+        })
     }
 
     fn snapshot(&self, repo: &Path, name: &str) -> Result<SnapshotRef, String> {
@@ -707,46 +711,74 @@ impl LoopBackend for JjBackend {
             ));
         }
 
-        let op_id = self.run_jj(repo, &["op", "log", "--color", "never", "-r", "@", "--no-graph"])?;
+        let op_id = self.run_jj(
+            repo,
+            &["op", "log", "--color", "never", "-r", "@", "--no-graph"],
+        )?;
         // Parse first non-empty line from op log output
-        let op_id = op_id.lines().find(|l| !l.is_empty()).unwrap_or("?").to_string();
+        let op_id = op_id
+            .lines()
+            .find(|l| !l.is_empty())
+            .unwrap_or("?")
+            .to_string();
 
-        let log = self.run_jj(repo, &[
-            "log", "-r", "@", "--no-graph",
-            "--template", r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
-        ])?;
+        let log = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "--template",
+                r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
+            ],
+        )?;
         let parts: Vec<&str> = log.trim().split_whitespace().collect();
         let change_id = parts.first().unwrap_or(&"?").to_string();
         let commit_id = parts.get(1).unwrap_or(&"?").to_string();
 
         // Check conflicts
-        let has_conflicts = self.run_jj(repo, &[
-            "log", "-r", "@", "--no-graph",
-            "--template", r#"if(conflicts, "yes", "no")"#,
-        ])
-        .map(|s| s.trim() == "yes")
-        .unwrap_or(false);
+        let has_conflicts = self
+            .run_jj(
+                repo,
+                &[
+                    "log",
+                    "-r",
+                    "@",
+                    "--no-graph",
+                    "--template",
+                    r#"if(conflicts, "yes", "no")"#,
+                ],
+            )
+            .map(|s| s.trim() == "yes")
+            .unwrap_or(false);
 
         // Check divergence
-        let has_divergence = self.run_jj(repo, &[
-            "log", "-r", "divergent()", "--no-graph",
-        ])
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
+        let has_divergence = self
+            .run_jj(repo, &["log", "-r", "divergent()", "--no-graph"])
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
 
         // Main bookmark commit
-        let main_commit = self.run_jj(repo, &[
-            "log", "-r", "main@origin", "--no-graph",
-            "--template", r#"commit_id.shortest(12)"#,
-        ])
-        .unwrap_or_default();
+        let main_commit = self
+            .run_jj(
+                repo,
+                &[
+                    "log",
+                    "-r",
+                    "main@origin",
+                    "--no-graph",
+                    "--template",
+                    r#"commit_id.shortest(12)"#,
+                ],
+            )
+            .unwrap_or_default();
 
         // Check stale working copy
-        let wc_stale = self.run_jj(repo, &[
-            "workspace", "status",
-        ])
-        .map(|s| s.contains("stale"))
-        .unwrap_or(false);
+        let wc_stale = self
+            .run_jj(repo, &["workspace", "status"])
+            .map(|s| s.contains("stale"))
+            .unwrap_or(false);
 
         Ok(SnapshotRef {
             repo_name: name.to_string(),
@@ -761,12 +793,7 @@ impl LoopBackend for JjBackend {
         })
     }
 
-    fn checkpoint(
-        &self,
-        repo: &Path,
-        name: &str,
-        message: &str,
-    ) -> Result<CheckpointRef, String> {
+    fn checkpoint(&self, repo: &Path, name: &str, message: &str) -> Result<CheckpointRef, String> {
         let _snap = self.snapshot(repo, name)?;
 
         // Create a new empty change on top of the current working copy,
@@ -788,16 +815,31 @@ impl LoopBackend for JjBackend {
 
     fn current_change(&self, repo: &Path, name: &str) -> Result<ChangeRef, String> {
         let snap = self.snapshot(repo, name)?;
-        let desc = self.run_jj(repo, &[
-            "log", "-r", "@", "--no-graph",
-            "--template", r#"description.first_line()"#,
-        ])?;
-        let is_empty = self.run_jj(repo, &[
-            "log", "-r", "@", "--no-graph",
-            "--template", r#"if(empty, "yes", "no")"#,
-        ])
-        .map(|s| s.trim() == "yes")
-        .unwrap_or(true);
+        let desc = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "--template",
+                r#"description.first_line()"#,
+            ],
+        )?;
+        let is_empty = self
+            .run_jj(
+                repo,
+                &[
+                    "log",
+                    "-r",
+                    "@",
+                    "--no-graph",
+                    "--template",
+                    r#"if(empty, "yes", "no")"#,
+                ],
+            )
+            .map(|s| s.trim() == "yes")
+            .unwrap_or(true);
 
         Ok(ChangeRef {
             repo_name: name.to_string(),
@@ -817,22 +859,46 @@ impl LoopBackend for JjBackend {
         let source_change_id = &input.source_change_id;
 
         // Step 1: Verify target bookmark exists
-        self.run_jj(repo, &[
-            "log", "-r", target_bookmark, "--no-graph",
-            "-T", r#"commit_id.shortest(12)"#,
-        ]).map_err(|e| format!("target bookmark '{}' not found: {}", target_bookmark, e))?;
+        self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                target_bookmark,
+                "--no-graph",
+                "-T",
+                r#"commit_id.shortest(12)"#,
+            ],
+        )
+        .map_err(|e| format!("target bookmark '{}' not found: {}", target_bookmark, e))?;
 
         // Step 2: Get source change description
-        let description = self.run_jj(repo, &[
-            "log", "-r", source_change_id, "--no-graph",
-            "-T", r#"description.first_line()"#,
-        ]).map_err(|e| format!("source change '{}' not found: {}", source_change_id, e))?;
+        let description = self
+            .run_jj(
+                repo,
+                &[
+                    "log",
+                    "-r",
+                    source_change_id,
+                    "--no-graph",
+                    "-T",
+                    r#"description.first_line()"#,
+                ],
+            )
+            .map_err(|e| format!("source change '{}' not found: {}", source_change_id, e))?;
 
         // Step 3: Check source has no conflicts
-        let has_conflicts = self.run_jj(repo, &[
-            "log", "-r", source_change_id, "--no-graph",
-            "-T", r#"if(conflicts, "yes", "no")"#,
-        ])?;
+        let has_conflicts = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                source_change_id,
+                "--no-graph",
+                "-T",
+                r#"if(conflicts, "yes", "no")"#,
+            ],
+        )?;
         if has_conflicts.trim() == "yes" {
             return Err(format!(
                 "source change '{}' has conflicts; resolve before creating RC",
@@ -845,21 +911,40 @@ impl LoopBackend for JjBackend {
         self.run_jj(repo, &["new", target_bookmark, "-m", &rc_message])?;
 
         // Step 5: Get RC identity
-        let rc_identity = self.run_jj(repo, &[
-            "log", "-r", "@", "--no-graph",
-            "-T", r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
-        ])?;
+        let rc_identity = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "-T",
+                r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
+            ],
+        )?;
         let parts: Vec<&str> = rc_identity.split_whitespace().collect();
-        let rc_change_id = parts.first().ok_or("failed to parse RC change_id")?.to_string();
-        let _rc_commit_id = parts.get(1).ok_or("failed to parse RC commit_id")?.to_string();
+        let rc_change_id = parts
+            .first()
+            .ok_or("failed to parse RC change_id")?
+            .to_string();
+        let _rc_commit_id = parts
+            .get(1)
+            .ok_or("failed to parse RC commit_id")?
+            .to_string();
 
         // Step 6: Rebase source onto target
-        self.run_jj(repo, &["rebase", "-r", source_change_id, "-d", target_bookmark])
-            .map_err(|e| format!("rebase failed (conflict?): {}", e))?;
+        self.run_jj(
+            repo,
+            &["rebase", "-r", source_change_id, "-d", target_bookmark],
+        )
+        .map_err(|e| format!("rebase failed (conflict?): {}", e))?;
 
         // Step 7: Squash source diff INTO the RC change
-        self.run_jj(repo, &["squash", "--into", &rc_change_id, "-r", source_change_id])
-            .map_err(|e| format!("squash into RC failed: {}", e))?;
+        self.run_jj(
+            repo,
+            &["squash", "--into", &rc_change_id, "-r", source_change_id],
+        )
+        .map_err(|e| format!("squash into RC failed: {}", e))?;
 
         // Step 8: Update RC description if squash_message provided
         let _final_description = if let Some(ref msg) = input.squash_message {
@@ -870,13 +955,26 @@ impl LoopBackend for JjBackend {
         };
 
         // Step 9: Final identity readback
-        let final_identity = self.run_jj(repo, &[
-            "log", "-r", &rc_change_id, "--no-graph",
-            "-T", r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
-        ])?;
+        let final_identity = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                &rc_change_id,
+                "--no-graph",
+                "-T",
+                r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
+            ],
+        )?;
         let final_parts: Vec<&str> = final_identity.split_whitespace().collect();
-        let final_change_id = final_parts.first().ok_or("failed to parse final change_id")?.to_string();
-        let final_commit_id = final_parts.get(1).ok_or("failed to parse final commit_id")?.to_string();
+        let final_change_id = final_parts
+            .first()
+            .ok_or("failed to parse final change_id")?
+            .to_string();
+        let final_commit_id = final_parts
+            .get(1)
+            .ok_or("failed to parse final commit_id")?
+            .to_string();
 
         Ok(ReleaseCandidate {
             repo_name: input.repo_name,
@@ -895,25 +993,47 @@ impl LoopBackend for JjBackend {
         let change_id = &candidate.change_id;
 
         // Step 1: Verify RC exists
-        self.run_jj(repo, &[
-            "log", "-r", change_id, "--no-graph",
-            "-T", r#"commit_id.shortest(12)"#,
-        ]).map_err(|e| format!("release candidate '{}' not found: {}", change_id, e))?;
+        self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                change_id,
+                "--no-graph",
+                "-T",
+                r#"commit_id.shortest(12)"#,
+            ],
+        )
+        .map_err(|e| format!("release candidate '{}' not found: {}", change_id, e))?;
 
         // Step 2: Check conflicts
-        let conflicts = self.run_jj(repo, &[
-            "log", "-r", change_id, "--no-graph",
-            "-T", r#"if(conflicts, "yes", "no")"#,
-        ])?;
+        let conflicts = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                change_id,
+                "--no-graph",
+                "-T",
+                r#"if(conflicts, "yes", "no")"#,
+            ],
+        )?;
         if conflicts.trim() == "yes" {
             return Err(format!("release candidate '{}' has conflicts", change_id));
         }
 
         // Step 3: Check empty
-        let empty = self.run_jj(repo, &[
-            "log", "-r", change_id, "--no-graph",
-            "-T", r#"if(empty, "yes", "no")"#,
-        ])?;
+        let empty = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                change_id,
+                "--no-graph",
+                "-T",
+                r#"if(empty, "yes", "no")"#,
+            ],
+        )?;
         if empty.trim() == "yes" {
             return Err(format!("release candidate '{}' is empty", change_id));
         }
@@ -922,10 +1042,17 @@ impl LoopBackend for JjBackend {
         self.run_jj(repo, &["bookmark", "set", "main", "-r", change_id])?;
 
         // Step 5: Verify
-        let main_commit = self.run_jj(repo, &[
-            "log", "-r", "main", "--no-graph",
-            "-T", r#"commit_id.shortest(12)"#,
-        ])?;
+        let main_commit = self.run_jj(
+            repo,
+            &[
+                "log",
+                "-r",
+                "main",
+                "--no-graph",
+                "-T",
+                r#"commit_id.shortest(12)"#,
+            ],
+        )?;
 
         Ok(ReleaseCommit {
             repo_name: candidate.repo_name,
@@ -969,7 +1096,8 @@ impl LoopBackend for JjBackend {
                     match self.run_jj(&target.path, &["git", "push", "-r", &target.bookmark]) {
                         Ok(_) => pushed.push(target.name.clone()),
                         Err(e) => {
-                            failed.push((target.name.clone(), format!("jj git push failed: {}", e)));
+                            failed
+                                .push((target.name.clone(), format!("jj git push failed: {}", e)));
                         }
                     }
                 }
@@ -1018,14 +1146,20 @@ impl LoopBackend for GitBackend {
     fn detect(&self, repo: &Path) -> Result<DetectionResult, String> {
         let has_git = repo.join(".git").exists();
         Ok(DetectionResult {
-            state: if has_git { BackendState::GitOnly } else { BackendState::None },
+            state: if has_git {
+                BackendState::GitOnly
+            } else {
+                BackendState::None
+            },
             jj_version: None,
         })
     }
 
     fn snapshot(&self, repo: &Path, name: &str) -> Result<SnapshotRef, String> {
         let commit_id = self.run_git(repo, &["rev-parse", "HEAD"])?;
-        let branch = self.run_git(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+        let branch = self
+            .run_git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap_or_default();
         let status = self.run_git(repo, &["status", "--porcelain=v1"])?;
 
         // Check for unmerged / conflicted paths
@@ -1076,14 +1210,20 @@ impl LoopBackend for GitBackend {
         })
     }
 
-    fn create_release_candidate(&self, repo: &Path, input: ReleaseInput) -> Result<ReleaseCandidate, String> {
+    fn create_release_candidate(
+        &self,
+        repo: &Path,
+        input: ReleaseInput,
+    ) -> Result<ReleaseCandidate, String> {
         let target = &input.target_bookmark;
         let source = &input.source_change_id;
 
         // Verify refs exist
-        let target_commit = self.run_git(repo, &["rev-parse", "--verify", target])
+        let target_commit = self
+            .run_git(repo, &["rev-parse", "--verify", target])
             .map_err(|e| format!("target bookmark '{}' not found: {}", target, e))?;
-        let source_commit = self.run_git(repo, &["rev-parse", "--verify", source])
+        let source_commit = self
+            .run_git(repo, &["rev-parse", "--verify", source])
             .map_err(|e| format!("source change '{}' not found: {}", source, e))?;
 
         // Get description
@@ -1095,12 +1235,18 @@ impl LoopBackend for GitBackend {
 
         // Create merge commit via merge-tree + commit-tree (no working tree mutation).
         // Uses --write-tree which is available in Git >= 2.34.
-        let merge_tree_raw = self.run_git(repo, &[
-            "merge-tree", "--write-tree",
-            target_commit.trim(),
-            source_commit.trim(),
-        ])?;
-        let tree_oid = merge_tree_raw.lines().next()
+        let merge_tree_raw = self.run_git(
+            repo,
+            &[
+                "merge-tree",
+                "--write-tree",
+                target_commit.trim(),
+                source_commit.trim(),
+            ],
+        )?;
+        let tree_oid = merge_tree_raw
+            .lines()
+            .next()
             .ok_or("merge-tree produced no output")?
             .trim()
             .to_string();
@@ -1113,19 +1259,29 @@ impl LoopBackend for GitBackend {
             ));
         }
 
-        let merge_commit = self.run_git(repo, &[
-            "commit-tree", &tree_oid,
-            "-p", target_commit.trim(),
-            "-p", source_commit.trim(),
-            "-m", &format!("release-candidate: {}", description),
-        ])?;
+        let merge_commit = self.run_git(
+            repo,
+            &[
+                "commit-tree",
+                &tree_oid,
+                "-p",
+                target_commit.trim(),
+                "-p",
+                source_commit.trim(),
+                "-m",
+                &format!("release-candidate: {}", description),
+            ],
+        )?;
         let merge_commit = merge_commit.trim().to_string();
 
         // Tag with timestamp
-        let tag_name = format!("rc-{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs());
+        let tag_name = format!(
+            "rc-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
         let _ = self.run_git(repo, &["tag", &tag_name, &merge_commit]);
 
         Ok(ReleaseCandidate {
@@ -1137,7 +1293,11 @@ impl LoopBackend for GitBackend {
         })
     }
 
-    fn finalize_candidate(&self, repo: &Path, candidate: ReleaseCandidate) -> Result<ReleaseCommit, String> {
+    fn finalize_candidate(
+        &self,
+        repo: &Path,
+        candidate: ReleaseCandidate,
+    ) -> Result<ReleaseCommit, String> {
         let commit_id = &candidate.commit_id;
 
         // Verify candidate exists and is a commit
@@ -1196,18 +1356,9 @@ pub fn detect_backend(repo: &Path) -> Result<Box<dyn LoopBackend>, String> {
     let jj = JjBackend::new();
     let det = jj.detect(repo)?;
     match det.state {
-        BackendState::JjColocated | BackendState::JjNative => {
-            Ok(Box::new(jj))
-        }
-        BackendState::GitOnly => {
-            Ok(Box::new(GitBackend))
-        }
-        BackendState::None => {
-            Err(format!(
-                "no VCS backend detected at {}",
-                repo.display()
-            ))
-        }
+        BackendState::JjColocated | BackendState::JjNative => Ok(Box::new(jj)),
+        BackendState::GitOnly => Ok(Box::new(GitBackend)),
+        BackendState::None => Err(format!("no VCS backend detected at {}", repo.display())),
     }
 }
 
@@ -1225,13 +1376,11 @@ fn wallet_dir(workspace_root: &Path) -> PathBuf {
 /// Save a wallet to disk.
 pub fn save_wallet(workspace_root: &Path, wallet: &LoopWallet) -> Result<(), String> {
     let dir = wallet_dir(workspace_root);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("failed to create wallet dir: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create wallet dir: {}", e))?;
     let path = dir.join(format!("{}-{}", wallet.feature, WALLET_FILENAME));
     let json = serde_json::to_string_pretty(wallet)
         .map_err(|e| format!("failed to serialize wallet: {}", e))?;
-    std::fs::write(&path, &json)
-        .map_err(|e| format!("failed to write wallet: {}", e))?;
+    std::fs::write(&path, &json).map_err(|e| format!("failed to write wallet: {}", e))?;
     Ok(())
 }
 
@@ -1241,8 +1390,7 @@ pub fn load_wallet(workspace_root: &Path, feature: &str) -> Result<LoopWallet, S
     let path = dir.join(format!("{}-{}", feature, WALLET_FILENAME));
     let json = std::fs::read_to_string(&path)
         .map_err(|e| format!("failed to read wallet '{}': {}", feature, e))?;
-    serde_json::from_str(&json)
-        .map_err(|e| format!("failed to parse wallet '{}': {}", feature, e))
+    serde_json::from_str(&json).map_err(|e| format!("failed to parse wallet '{}': {}", feature, e))
 }
 
 /// List all known wallets.
@@ -1277,28 +1425,43 @@ mod tests {
     fn test_state_machine_valid_transitions() {
         // Valid: Open → DirtyDev
         assert!(validate_state_transition(
-            &LoopState::Open, &LoopState::DirtyDev, &LoopAction::Checkpoint
-        ).is_ok());
+            &LoopState::Open,
+            &LoopState::DirtyDev,
+            &LoopAction::Checkpoint
+        )
+        .is_ok());
 
         // Valid: DirtyDev → InSyncDev via DevSync
         assert!(validate_state_transition(
-            &LoopState::DirtyDev, &LoopState::InSyncDev, &LoopAction::DevSync
-        ).is_ok());
+            &LoopState::DirtyDev,
+            &LoopState::InSyncDev,
+            &LoopAction::DevSync
+        )
+        .is_ok());
 
         // Invalid: Open → Published
         assert!(validate_state_transition(
-            &LoopState::Open, &LoopState::Published, &LoopAction::Publish
-        ).is_err());
+            &LoopState::Open,
+            &LoopState::Published,
+            &LoopAction::Publish
+        )
+        .is_err());
 
         // Valid: ReleaseFixedPoint → Published
         assert!(validate_state_transition(
-            &LoopState::ReleaseFixedPoint, &LoopState::Published, &LoopAction::Publish
-        ).is_ok());
+            &LoopState::ReleaseFixedPoint,
+            &LoopState::Published,
+            &LoopAction::Publish
+        )
+        .is_ok());
 
         // Valid: any → Blocked
         assert!(validate_state_transition(
-            &LoopState::InSyncDev, &LoopState::Blocked, &LoopAction::DevSync
-        ).is_ok());
+            &LoopState::InSyncDev,
+            &LoopState::Blocked,
+            &LoopAction::DevSync
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1437,25 +1600,30 @@ mod tests {
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["config", "user.email", "test@test"])
             .current_dir(path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["config", "user.name", "test"])
             .current_dir(path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         // First commit so HEAD exists
         std::process::Command::new("git")
             .args(["commit", "--allow-empty", "-m", "initial"])
             .current_dir(path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         // Rename default branch to main
         std::process::Command::new("git")
             .args(["branch", "-m", "main"])
             .current_dir(path)
-            .output().unwrap();
+            .output()
+            .unwrap();
     }
 
     // -----------------------------------------------------------------------
@@ -1489,7 +1657,9 @@ mod tests {
         std::fs::write(repo_path.join("test.txt"), "hello").unwrap();
 
         let backend = GitBackend;
-        let cp = backend.checkpoint(&repo_path, "test-repo", "my checkpoint").unwrap();
+        let cp = backend
+            .checkpoint(&repo_path, "test-repo", "my checkpoint")
+            .unwrap();
         assert_eq!(cp.repo_name, "test-repo");
         assert!(cp.message.contains("checkpoint: my checkpoint"));
         assert_eq!(cp.change_id.len(), 40);
@@ -1521,38 +1691,45 @@ mod tests {
         std::process::Command::new("git")
             .args(["add", "-A"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["commit", "-m", "main work"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Create feature branch with different content
         std::process::Command::new("git")
             .args(["checkout", "-b", "feature"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::fs::write(repo_path.join("feature.txt"), "feature content").unwrap();
         std::process::Command::new("git")
             .args(["add", "-A"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["commit", "-m", "feature work"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Go back to main
         std::process::Command::new("git")
             .args(["checkout", "main"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Get the source commit id
         let output = std::process::Command::new("git")
             .args(["rev-parse", "feature"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         let source_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         let backend = GitBackend;
@@ -1579,39 +1756,46 @@ mod tests {
         std::process::Command::new("git")
             .args(["checkout", "-b", "feature"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::fs::write(repo_path.join("feature.txt"), "feature").unwrap();
         std::process::Command::new("git")
             .args(["add", "-A"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["commit", "-m", "feature work"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Create additional commit on feature (to have divergence from main)
         std::fs::write(repo_path.join("more.txt"), "more").unwrap();
         std::process::Command::new("git")
             .args(["add", "-A"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["commit", "-m", "more work"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Go back to main
         std::process::Command::new("git")
             .args(["checkout", "main"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Get source id
         let output = std::process::Command::new("git")
             .args(["rev-parse", "feature"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         let source_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         // Create RC
@@ -1633,8 +1817,11 @@ mod tests {
         let main_commit = std::process::Command::new("git")
             .args(["rev-parse", "main"])
             .current_dir(&repo_path)
-            .output().unwrap();
-        let main_id = String::from_utf8_lossy(&main_commit.stdout).trim().to_string();
+            .output()
+            .unwrap();
+        let main_id = String::from_utf8_lossy(&main_commit.stdout)
+            .trim()
+            .to_string();
         assert_eq!(finalized.commit_id, main_id);
     }
 
@@ -1676,14 +1863,23 @@ mod tests {
     fn init_jj_repo(path: &Path) {
         std::process::Command::new("jj")
             .args(["git", "init", &path.to_string_lossy()])
-            .output().unwrap();
+            .output()
+            .unwrap();
         // Set user config via git (jj uses git config in colocated mode)
         std::process::Command::new("git")
-            .args(["-C", &path.to_string_lossy(), "config", "user.email", "test@test"])
-            .output().unwrap();
+            .args([
+                "-C",
+                &path.to_string_lossy(),
+                "config",
+                "user.email",
+                "test@test",
+            ])
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["-C", &path.to_string_lossy(), "config", "user.name", "test"])
-            .output().unwrap();
+            .output()
+            .unwrap();
     }
 
     #[test]
@@ -1702,20 +1898,30 @@ mod tests {
         std::process::Command::new("jj")
             .args(["new", "-m", "feature work"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         // Get the source change ID (the change we just created)
         let out = std::process::Command::new("jj")
-            .args(["log", "-r", "@", "--no-graph", "-T", "change_id.shortest(12)"])
+            .args([
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "-T",
+                "change_id.shortest(12)",
+            ])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         let source_id = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
         // Go back to main
         std::process::Command::new("jj")
             .args(["new", "main"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         let backend = JjBackend::new();
         let input = ReleaseInput {
@@ -1747,19 +1953,29 @@ mod tests {
         std::process::Command::new("jj")
             .args(["new", "-m", "feature work"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         let out = std::process::Command::new("jj")
-            .args(["log", "-r", "@", "--no-graph", "-T", "change_id.shortest(12)"])
+            .args([
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "-T",
+                "change_id.shortest(12)",
+            ])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
         let source_id = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
         // Go back to main
         std::process::Command::new("jj")
             .args(["new", "main"])
             .current_dir(&repo_path)
-            .output().unwrap();
+            .output()
+            .unwrap();
 
         let backend = JjBackend::new();
         let input = ReleaseInput {

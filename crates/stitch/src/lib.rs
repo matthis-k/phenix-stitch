@@ -1,5 +1,4 @@
 pub mod changeset;
-pub mod workloop;
 pub mod config;
 pub mod exec;
 pub mod git;
@@ -9,6 +8,7 @@ pub mod recipe;
 pub mod status;
 pub mod sync;
 pub mod validate;
+pub mod workloop;
 
 pub use exec::{
     build_plan, build_scope, parse_closure_mode, parse_execution_mode, parse_order_mode,
