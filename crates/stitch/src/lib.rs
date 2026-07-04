@@ -1,4 +1,5 @@
 pub mod changeset;
+pub mod workloop;
 pub mod config;
 pub mod exec;
 pub mod git;
