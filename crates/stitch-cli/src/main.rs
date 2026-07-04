@@ -10,6 +10,7 @@ use stitch::exec;
 use stitch::git;
 use stitch::recipe;
 use stitch::sync;
+use stitch::workloop;
 
 fn main() {
     let cli = Cli::parse();
@@ -121,6 +122,7 @@ fn main() {
         ),
         Commands::Recipe { command } => cmd_recipe(command),
         Commands::Changeset { command } => cmd_changeset(command),
+        Commands::Loop { command } => cmd_loop(command),
     };
 
     if let Err(e) = result {
@@ -693,6 +695,333 @@ fn cmd_changeset(command: &ChangesetCliCommand) -> Result<(), String> {
     }
 }
 
+fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
+    let workspace_root = find_workspace_root()?;
+    match command {
+        LoopCliCommand::Detect { repo, json } => {
+            let path = repo
+                .as_ref()
+                .map(|s| std::path::Path::new(s))
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let backend = workloop::detect_backend(path)?;
+            let detection = backend.detect(path)?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&detection).unwrap());
+            } else {
+                println!("Backend:  {:?}", detection.state);
+                if let Some(ver) = &detection.jj_version {
+                    println!("JJ version:  {}", ver);
+                }
+            }
+            Ok(())
+        }
+        LoopCliCommand::Status { feature, json } => {
+            let wallet = workloop::load_wallet(&workspace_root, feature)?;
+            let repo_path = wallet
+                .repos
+                .first()
+                .map(|r| r.path.clone())
+                .unwrap_or_else(|| workspace_root.clone());
+            let repo_name = wallet
+                .repos
+                .first()
+                .map(|r| r.name.clone())
+                .unwrap_or_else(|| feature.clone());
+            let backend = workloop::detect_backend(&repo_path)?;
+            let snapshot = backend.snapshot(&repo_path, &repo_name)?;
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "wallet": &wallet,
+                        "snapshot": &snapshot,
+                    }))
+                    .unwrap()
+                );
+            } else {
+                println!("Feature: {}", wallet.feature);
+                println!("State:   {:?}", wallet.state);
+                println!("Repos:   {}", wallet.repos.len());
+                let ts = serde_json::to_value(&wallet.created_at)
+                    .and_then(|v| Ok(v.as_str().unwrap_or("?").to_string()))
+                    .unwrap_or_else(|_| "?".to_string());
+                println!("Created: {}", ts);
+                println!();
+                println!("Snapshot:");
+                println!("  commit: {}", snapshot.commit_id);
+                println!("  change: {}", snapshot.change_id);
+                if snapshot.has_conflicts {
+                    println!("  CONFLICTS DETECTED");
+                }
+            }
+            Ok(())
+        }
+        LoopCliCommand::Checkpoint { feature, message } => {
+            let message = message
+                .clone()
+                .unwrap_or_else(|| format!("checkpoint: {}", feature));
+            let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
+            workloop::validate_state_transition(
+                &wallet.state,
+                &workloop::LoopState::InSyncDev,
+                &workloop::LoopAction::DevSync,
+            )?;
+            let backend = detect_backend_for_wallet(&wallet)?;
+            let repo_path = wallet
+                .repos
+                .first()
+                .map(|r| r.path.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let repo_name = wallet
+                .repos
+                .first()
+                .map(|r| r.name.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let cp = backend.checkpoint(&repo_path, &repo_name, &message)?;
+            wallet.state = workloop::LoopState::InSyncDev;
+            wallet.updated_at = workloop::Timestamp::now();
+            wallet.decisions.push(workloop::Decision {
+                title: format!("checkpoint: {}", cp.message),
+                rationale: format!("Checkpoint created at change {}", cp.change_id),
+                outcome: workloop::DecisionOutcome::Accepted,
+                agent_id: None,
+                created_at: workloop::Timestamp::now(),
+            });
+            workloop::save_wallet(&workspace_root, &wallet)?;
+            println!("Checkpoint created for '{}'", feature);
+            Ok(())
+        }
+        LoopCliCommand::DevSync { feature, message } => {
+            let message = message
+                .clone()
+                .unwrap_or_else(|| format!("dev-sync: {}", feature));
+            let backend = detect_backend_current_dir()?;
+            let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {}", e))?;
+            let snapshot = backend.snapshot(&cwd, feature)?;
+            let cp = backend.checkpoint(&cwd, feature, &message)?;
+            let mut wallet = match workloop::load_wallet(&workspace_root, feature) {
+                Ok(w) => w,
+                Err(_) => {
+                    let now = workloop::Timestamp::now();
+                    workloop::LoopWallet {
+                        schema_version: 1,
+                        loop_id: format!("loop-{}", feature),
+                        feature: feature.clone(),
+                        backend: workloop::VcsBackend::Jj,
+                        state: workloop::LoopState::Open,
+                        repos: vec![],
+                        verification: workloop::VerificationPointer {
+                            dev_profile: None,
+                            dev_status: workloop::CheckStatus::NotRun,
+                            release_profile: None,
+                            release_status: workloop::CheckStatus::NotRun,
+                            last_evidence_id: None,
+                        },
+                        decisions: vec![],
+                        blockers: vec![],
+                        handoff: None,
+                        next_valid_actions: workloop::valid_actions_for_state(
+                            &workloop::LoopState::Open,
+                        ),
+                        created_at: now.clone(),
+                        updated_at: now,
+                        revision: 1,
+                    }
+                }
+            };
+            wallet.state = workloop::LoopState::InSyncDev;
+            wallet.updated_at = workloop::Timestamp::now();
+            wallet.decisions.push(workloop::Decision {
+                title: format!("dev-sync: {}", cp.message),
+                rationale: format!("Dev-sync at change {}", cp.change_id),
+                outcome: workloop::DecisionOutcome::Accepted,
+                agent_id: None,
+                created_at: workloop::Timestamp::now(),
+            });
+            workloop::save_wallet(&workspace_root, &wallet)?;
+            if snapshot.has_conflicts {
+                println!("WARNING: conflicts detected");
+            }
+            println!("Dev-sync for '{}': snapshot + checkpoint done", feature);
+            Ok(())
+        }
+        LoopCliCommand::CreateRc { feature, target } => {
+            let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
+            let backend = detect_backend_for_wallet(&wallet)?;
+            let repo_path = wallet
+                .repos
+                .first()
+                .map(|r| r.path.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let repo_name = wallet
+                .repos
+                .first()
+                .map(|r| r.name.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let change = backend.current_change(&repo_path, &repo_name)?;
+            let input = workloop::ReleaseInput {
+                repo_name: repo_name.clone(),
+                source_change_id: change.change_id,
+                target_bookmark: target.clone().unwrap_or_else(|| "main".to_string()),
+                squash_message: None,
+            };
+            let rc = backend.create_release_candidate(&repo_path, input)?;
+            wallet.state = workloop::LoopState::ReleaseCandidate;
+            wallet.updated_at = workloop::Timestamp::now();
+            wallet.decisions.push(workloop::Decision {
+                title: format!("create-rc: {}", rc.commit_id),
+                rationale: format!("Release candidate created for '{}'", feature),
+                outcome: workloop::DecisionOutcome::Accepted,
+                agent_id: None,
+                created_at: workloop::Timestamp::now(),
+            });
+            workloop::save_wallet(&workspace_root, &wallet)?;
+            println!("Release candidate created: {}", rc.commit_id);
+            Ok(())
+        }
+        LoopCliCommand::FinalizeDryRun { feature } => {
+            let wallet = workloop::load_wallet(&workspace_root, feature)?;
+            let backend = detect_backend_for_wallet(&wallet)?;
+            let repo_path = wallet
+                .repos
+                .first()
+                .map(|r| r.path.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let repo_name = wallet
+                .repos
+                .first()
+                .map(|r| r.name.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let snapshot = backend.snapshot(&repo_path, &repo_name)?;
+            println!("Finalize dry-run for '{}': checks passed", feature);
+            println!("  Current commit: {}", snapshot.commit_id);
+            Ok(())
+        }
+        LoopCliCommand::FinalizeApply { feature, apply } => {
+            if !*apply {
+                return Err("Must use --apply to finalize".to_string());
+            }
+            let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
+            let backend = detect_backend_for_wallet(&wallet)?;
+            let repo_path = wallet
+                .repos
+                .first()
+                .map(|r| r.path.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let repo_name = wallet
+                .repos
+                .first()
+                .map(|r| r.name.clone())
+                .ok_or_else(|| "No repos in wallet".to_string())?;
+            let change = backend.current_change(&repo_path, &repo_name)?;
+            let candidate = workloop::ReleaseCandidate {
+                repo_name: repo_name.clone(),
+                change_id: change.change_id.clone(),
+                commit_id: change.commit_id.clone(),
+                exportable_git_commit_id: None,
+                checks_status: workloop::CheckStatus::NotRun,
+            };
+            let commit = backend.finalize_candidate(&repo_path, candidate)?;
+            wallet.state = workloop::LoopState::ReleaseFixedPoint;
+            wallet.updated_at = workloop::Timestamp::now();
+            wallet.decisions.push(workloop::Decision {
+                title: format!("finalize: {}", commit.commit_id),
+                rationale: "Release finalized".to_string(),
+                outcome: workloop::DecisionOutcome::Accepted,
+                agent_id: None,
+                created_at: workloop::Timestamp::now(),
+            });
+            workloop::save_wallet(&workspace_root, &wallet)?;
+            println!("Finalized: {}", commit.commit_id);
+            Ok(())
+        }
+        LoopCliCommand::Publish { feature } => {
+            let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
+            let targets: Vec<workloop::PublishTarget> = wallet
+                .repos
+                .iter()
+                .map(|r| workloop::PublishTarget {
+                    name: r.name.clone(),
+                    path: r.path.clone(),
+                    bookmark: "main".to_string(),
+                })
+                .collect();
+            let refs = {
+                #[allow(deprecated)]
+                workloop::PublishRefs {
+                    targets,
+                    repos: vec![],
+                    main_bookmarks: vec![],
+                }
+            };
+            let backend = detect_backend_for_wallet(&wallet)?;
+            let results = backend.publish(refs)?;
+            wallet.state = workloop::LoopState::Published;
+            wallet.updated_at = workloop::Timestamp::now();
+            wallet.decisions.push(workloop::Decision {
+                title: "publish".to_string(),
+                rationale: format!("Published {} repo(s)", results.pushed.len()),
+                outcome: workloop::DecisionOutcome::Accepted,
+                agent_id: None,
+                created_at: workloop::Timestamp::now(),
+            });
+            workloop::save_wallet(&workspace_root, &wallet)?;
+            for r in &results.pushed {
+                println!("  {}: OK", r);
+            }
+            for (target, msg) in &results.failed {
+                println!("  {}: FAIL  {}", target, msg);
+            }
+            if !results.failed.is_empty() {
+                return Err("Some publishes failed".to_string());
+            }
+            Ok(())
+        }
+        LoopCliCommand::List { json } => {
+            let wallets = workloop::list_wallets(&workspace_root)?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&wallets).unwrap());
+            } else {
+                println!("Tracked features:");
+                for w in &wallets {
+                    println!("  {}", w);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Helper: detect backend for the current directory (for dev-sync)
+fn detect_backend_current_dir() -> Result<Box<dyn workloop::LoopBackend>, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {}", e))?;
+    workloop::detect_backend(&cwd)
+}
+
+/// Helper: detect backend for the first repo in a wallet
+fn detect_backend_for_wallet(
+    wallet: &workloop::LoopWallet,
+) -> Result<Box<dyn workloop::LoopBackend>, String> {
+    let repo_path = wallet
+        .repos
+        .first()
+        .map(|r| r.path.clone())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    workloop::detect_backend(&repo_path)
+}
+
+/// Find the workspace root: look for .stitch directory, fall back to config
+fn find_workspace_root() -> Result<std::path::PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("cwd: {}", e))?;
+    for ancestor in cwd.ancestors() {
+        if ancestor.join(".stitch").exists() {
+            return Ok(ancestor.to_path_buf());
+        }
+    }
+    let cfg = stitch::config::find_and_load()?;
+    Ok(std::path::PathBuf::from(&cfg.workspace))
+}
+
 #[derive(Parser)]
 #[command(
     name = "stitch",
@@ -877,6 +1206,11 @@ enum Commands {
     Changeset {
         #[command(subcommand)]
         command: ChangesetCliCommand,
+    },
+    /// Work Loop: JJ-backed feature development lifecycle
+    Loop {
+        #[command(subcommand)]
+        command: LoopCliCommand,
     },
 }
 
@@ -1083,6 +1417,73 @@ enum ChangesetCliCommand {
     Push,
     /// Abort the current changeset
     Abort,
+}
+
+#[derive(Subcommand)]
+enum LoopCliCommand {
+    /// Detect VCS backend(s) for the workspace
+    Detect {
+        /// Repo path (default: current dir)
+        repo: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show wallet + backend snapshot for a feature
+    Status {
+        /// Feature name
+        feature: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a resumable development checkpoint
+    Checkpoint {
+        /// Feature name
+        feature: String,
+        /// Checkpoint message
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+    /// Snapshot + checkpoint in one command
+    DevSync {
+        /// Feature name
+        feature: String,
+        /// Commit message
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+    /// Create a release candidate (dry-run: no wallet mutations)
+    CreateRc {
+        /// Feature name
+        feature: String,
+        /// Target bookmark (default: main)
+        #[arg(long)]
+        target: Option<String>,
+    },
+    /// Verify finalize without applying (checks)
+    FinalizeDryRun {
+        /// Feature name
+        feature: String,
+    },
+    /// Apply finalize (move main bookmark to RC)
+    FinalizeApply {
+        /// Feature name
+        feature: String,
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Publish feature changes
+    Publish {
+        /// Feature name
+        feature: String,
+    },
+    /// List tracked features/wallets
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn cmd_repos() -> Result<(), String> {

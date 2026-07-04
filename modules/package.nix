@@ -182,6 +182,7 @@
           pkgs.rust-analyzer
           pkgs.git
           pkgs.nix
+          pkgs.jujutsu
           stitchCliPkg
         ]
         ++ rustToolchain;
@@ -190,6 +191,7 @@
           echo "  cargo: $(cargo --version 2>/dev/null || echo '?')"
           echo "  rustc: $(rustc --version 2>/dev/null || echo '?')"
           echo "  stitch: $(stitch --version 2>/dev/null || echo '?')"
+          echo "  jj: $(jj --version 2>/dev/null || echo 'not installed')"
         '';
       };
     };

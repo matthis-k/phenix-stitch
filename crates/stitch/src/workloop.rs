@@ -652,6 +652,7 @@ impl JjBackend {
         let jj = self.resolve_jj()?.to_path_buf();
         let output = std::process::Command::new(&jj)
             .args(args)
+            .env("JJ_EDITOR", "cat")
             .current_dir(repo)
             .output()
             .map_err(|e| format!("failed to run jj: {}", e))?;
@@ -747,7 +748,7 @@ impl LoopBackend for JjBackend {
                     "@",
                     "--no-graph",
                     "--template",
-                    r#"if(conflicts, "yes", "no")"#,
+                    r#"if(conflict, "yes", "no")"#,
                 ],
             )
             .map(|s| s.trim() == "yes")
@@ -896,7 +897,7 @@ impl LoopBackend for JjBackend {
                 source_change_id,
                 "--no-graph",
                 "-T",
-                r#"if(conflicts, "yes", "no")"#,
+                r#"if(conflict, "yes", "no")"#,
             ],
         )?;
         if has_conflicts.trim() == "yes" {
@@ -932,17 +933,27 @@ impl LoopBackend for JjBackend {
             .ok_or("failed to parse RC commit_id")?
             .to_string();
 
-        // Step 6: Rebase source onto target
-        self.run_jj(
+        // Step 6: Rebase source onto target (OK if already on target)
+        let rebase_result = self.run_jj(
             repo,
             &["rebase", "-r", source_change_id, "-d", target_bookmark],
-        )
-        .map_err(|e| format!("rebase failed (conflict?): {}", e))?;
+        );
+        if let Err(e) = &rebase_result {
+            if !e.contains("onto itself") {
+                return Err(format!("rebase failed (conflict?): {}", e));
+            }
+        }
 
         // Step 7: Squash source diff INTO the RC change
         self.run_jj(
             repo,
-            &["squash", "--into", &rc_change_id, "-r", source_change_id],
+            &[
+                "squash",
+                "--from",
+                source_change_id,
+                "--into",
+                &rc_change_id,
+            ],
         )
         .map_err(|e| format!("squash into RC failed: {}", e))?;
 
@@ -1015,7 +1026,7 @@ impl LoopBackend for JjBackend {
                 change_id,
                 "--no-graph",
                 "-T",
-                r#"if(conflicts, "yes", "no")"#,
+                r#"if(conflict, "yes", "no")"#,
             ],
         )?;
         if conflicts.trim() == "yes" {
@@ -1880,6 +1891,18 @@ mod tests {
             .args(["-C", &path.to_string_lossy(), "config", "user.name", "test"])
             .output()
             .unwrap();
+
+        // Create initial commit and main bookmark (JJ 0.42+ doesn't auto-create main)
+        std::process::Command::new("jj")
+            .args(["new", "-m", "initial"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        std::process::Command::new("jj")
+            .args(["bookmark", "create", "main", "-r", "@-"])
+            .current_dir(path)
+            .output()
+            .unwrap();
     }
 
     #[test]
@@ -1893,10 +1916,12 @@ mod tests {
         let repo_path = dir.path().join("repo");
         std::fs::create_dir_all(&repo_path).unwrap();
         init_jj_repo(&repo_path);
+        // Write a file so the feature change has actual content
+        std::fs::write(repo_path.join("test.txt"), "feature content").unwrap();
 
         // Create a feature change
         std::process::Command::new("jj")
-            .args(["new", "-m", "feature work"])
+            .args(["describe", "-m", "feature work"])
             .current_dir(&repo_path)
             .output()
             .unwrap();
@@ -1950,8 +1975,11 @@ mod tests {
         init_jj_repo(&repo_path);
 
         // Create a feature change
+        // Write a file so the feature change has actual content
+        std::fs::write(repo_path.join("test.txt"), "feature content").unwrap();
+
         std::process::Command::new("jj")
-            .args(["new", "-m", "feature work"])
+            .args(["describe", "-m", "feature work"])
             .current_dir(&repo_path)
             .output()
             .unwrap();

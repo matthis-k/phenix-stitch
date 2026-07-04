@@ -43,6 +43,13 @@ fn main() {
     server.add_tool(Box::new(tools::StitchCommitTemplateTool));
     server.add_tool(Box::new(tools::StitchCommitTool));
     server.add_tool(Box::new(tools::StitchSyncTool));
+    server.add_tool(Box::new(tools::StitchLoopDetectTool));
+    server.add_tool(Box::new(tools::StitchLoopSnapshotTool));
+    server.add_tool(Box::new(tools::StitchLoopCheckpointTool));
+    server.add_tool(Box::new(tools::StitchLoopCurrentChangeTool));
+    server.add_tool(Box::new(tools::StitchLoopCreateRcTool));
+    server.add_tool(Box::new(tools::StitchLoopFinalizeCandidateTool));
+    server.add_tool(Box::new(tools::StitchLoopPublishTool));
 
     server.add_resource(Box::new(resources::StitchWorkspaceResource));
     server.add_resource(Box::new(resources::StitchReposResource));

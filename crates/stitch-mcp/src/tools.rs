@@ -6,6 +6,8 @@ use phenix_mcp_core::types::{MutationLevel, ToolMetadata};
 use serde_json::{json, Value};
 
 use stitch::exec;
+use stitch::workloop;
+use stitch::workloop::LoopBackend;
 
 fn mk_err(kind: ErrorKind, msg: &str, audit_id: &str) -> ToolFailure {
     ToolFailure::new(kind, msg, audit_id)
@@ -988,6 +990,756 @@ impl McpTool for StitchSyncTool {
                 &audit_id,
             )),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop detection tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopDetectTool;
+
+impl McpTool for StitchLoopDetectTool {
+    fn name(&self) -> &str {
+        "stitch.loop_detect"
+    }
+    fn description(&self) -> &str {
+        "Detect VCS backend for a repo path"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        let backend = match workloop::detect_backend(&repo_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Backend detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+        let detection = match backend.detect(&repo_path) {
+            Ok(d) => d,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let result = ToolResult::ok(
+            serde_json::to_value(&detection).unwrap_or_default(),
+            format!("Backend: {:?}", detection.state),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop snapshot tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopSnapshotTool;
+
+impl McpTool for StitchLoopSnapshotTool {
+    fn name(&self) -> &str {
+        "stitch.loop_snapshot"
+    }
+    fn description(&self) -> &str {
+        "Take snapshot of current VCS state"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let repo_name = repo_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("default")
+            .to_string();
+
+        let backend = match workloop::detect_backend(&repo_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Backend detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+        let snapshot = match backend.snapshot(&repo_path, &repo_name) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Snapshot failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let result = ToolResult::ok(
+            serde_json::to_value(&snapshot).unwrap_or_default(),
+            format!("Snapshot: {} @ {}", snapshot.repo_name, snapshot.commit_id),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop checkpoint tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopCheckpointTool;
+
+impl McpTool for StitchLoopCheckpointTool {
+    fn name(&self) -> &str {
+        "stitch.loop_checkpoint"
+    }
+    fn description(&self) -> &str {
+        "Create a resumable development checkpoint"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::CreatesCommit)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" },
+            "feature": { "type": "string", "description": "Feature name for the wallet" },
+            "message": { "type": "string", "description": "Checkpoint message" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let feature = input
+            .get("feature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let message = input
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("checkpoint");
+        let repo_name = repo_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("default")
+            .to_string();
+
+        let cfg = match stitch::config::find_and_load() {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Config: {}", e),
+                    &audit_id,
+                ))
+            }
+        };
+        let workspace_root = std::path::Path::new(&cfg.workspace);
+
+        let backend = match workloop::detect_backend(&repo_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Backend detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let checkpoint = match backend.checkpoint(&repo_path, &repo_name, message) {
+            Ok(cp) => cp,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Checkpoint failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Load or create wallet
+        let mut wallet = match workloop::load_wallet(workspace_root, feature) {
+            Ok(w) => w,
+            Err(_) => workloop::LoopWallet {
+                schema_version: 1,
+                loop_id: format!("loop-{}", feature),
+                feature: feature.to_string(),
+                backend: workloop::VcsBackend::Jj,
+                state: workloop::LoopState::DirtyDev,
+                repos: Vec::new(),
+                verification: workloop::VerificationPointer {
+                    dev_profile: None,
+                    dev_status: workloop::CheckStatus::NotRun,
+                    release_profile: None,
+                    release_status: workloop::CheckStatus::NotRun,
+                    last_evidence_id: None,
+                },
+                decisions: Vec::new(),
+                blockers: Vec::new(),
+                handoff: None,
+                next_valid_actions: workloop::valid_actions_for_state(
+                    &workloop::LoopState::DirtyDev,
+                ),
+                created_at: workloop::Timestamp::now(),
+                updated_at: workloop::Timestamp::now(),
+                revision: 1,
+            },
+        };
+
+        // Add/update repo ref in wallet
+        let repo_ref = workloop::RepoLoopRef {
+            name: repo_name.clone(),
+            path: repo_path.clone(),
+            workspace: None,
+            base_operation_id: checkpoint.operation_id.clone(),
+            current_operation_id: checkpoint.operation_id.clone(),
+            working_copy_change_id: checkpoint.change_id.clone(),
+            working_copy_commit_id: String::new(),
+            main_bookmark: "main".to_string(),
+            feature_bookmark: None,
+            release_candidate_change_id: None,
+            exported_git_commit: None,
+            release_git_commit: None,
+        };
+        if let Some(pos) = wallet.repos.iter().position(|r| r.name == repo_name) {
+            wallet.repos[pos] = repo_ref;
+        } else {
+            wallet.repos.push(repo_ref);
+        }
+        wallet.updated_at = workloop::Timestamp::now();
+        wallet.revision += 1;
+
+        if let Err(e) = workloop::save_wallet(workspace_root, &wallet) {
+            return Err(mk_err(
+                ErrorKind::Internal,
+                &format!("Failed to save wallet: {e}"),
+                &audit_id,
+            ));
+        }
+
+        let result = ToolResult::ok(
+            serde_json::to_value(&checkpoint).unwrap_or_default(),
+            format!("Checkpoint: {} ({})", message, checkpoint.change_id),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop current-change tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopCurrentChangeTool;
+
+impl McpTool for StitchLoopCurrentChangeTool {
+    fn name(&self) -> &str {
+        "stitch.loop_current_change"
+    }
+    fn description(&self) -> &str {
+        "Get current change identity"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let repo_name = repo_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("default")
+            .to_string();
+
+        let backend = match workloop::detect_backend(&repo_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Backend detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+        let change = match backend.current_change(&repo_path, &repo_name) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Current change failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let result = ToolResult::ok(
+            serde_json::to_value(&change).unwrap_or_default(),
+            format!("Change: {} (empty: {})", change.change_id, change.is_empty),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop create-release-candidate tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopCreateRcTool;
+
+impl McpTool for StitchLoopCreateRcTool {
+    fn name(&self) -> &str {
+        "stitch.loop_create_rc"
+    }
+    fn description(&self) -> &str {
+        "Create a release candidate"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::CreatesCommit)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" },
+            "feature": { "type": "string", "description": "Feature name for the wallet" },
+            "target": { "type": "string", "description": "Target bookmark (default: main)" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let feature = input
+            .get("feature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let target = input
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+        let repo_name = repo_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("default")
+            .to_string();
+
+        let cfg = match stitch::config::find_and_load() {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Config: {}", e),
+                    &audit_id,
+                ))
+            }
+        };
+        let workspace_root = std::path::Path::new(&cfg.workspace);
+
+        // Load wallet (must exist)
+        let mut wallet = match workloop::load_wallet(workspace_root, feature) {
+            Ok(w) => w,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Wallet not found: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let backend = match workloop::detect_backend(&repo_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Backend detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Get current change as source
+        let change = match backend.current_change(&repo_path, &repo_name) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Failed to get current change: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let release_input = workloop::ReleaseInput {
+            repo_name: repo_name.clone(),
+            source_change_id: change.change_id.clone(),
+            target_bookmark: target.to_string(),
+            squash_message: None,
+        };
+
+        let rc = match backend.create_release_candidate(&repo_path, release_input) {
+            Ok(rc) => rc,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("RC creation failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Update wallet
+        if let Some(pos) = wallet.repos.iter().position(|r| r.name == repo_name) {
+            wallet.repos[pos].release_candidate_change_id = Some(rc.change_id.clone());
+        }
+        wallet.state = workloop::LoopState::ReleaseCandidate;
+        wallet.next_valid_actions =
+            workloop::valid_actions_for_state(&workloop::LoopState::ReleaseCandidate);
+        wallet.updated_at = workloop::Timestamp::now();
+        wallet.revision += 1;
+
+        if let Err(e) = workloop::save_wallet(workspace_root, &wallet) {
+            return Err(mk_err(
+                ErrorKind::Internal,
+                &format!("Failed to save wallet: {e}"),
+                &audit_id,
+            ));
+        }
+
+        let result = ToolResult::ok(
+            serde_json::to_value(&rc).unwrap_or_default(),
+            format!("RC created: {} ({})", rc.repo_name, rc.change_id),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop finalize-candidate tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopFinalizeCandidateTool;
+
+impl McpTool for StitchLoopFinalizeCandidateTool {
+    fn name(&self) -> &str {
+        "stitch.loop_finalize_candidate"
+    }
+    fn description(&self) -> &str {
+        "Finalize a release candidate (move main bookmark)"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::CreatesCommit)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" },
+            "feature": { "type": "string", "description": "Feature name for the wallet" },
+            "apply": { "type": "boolean", "description": "Must be true to execute" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+
+        let apply = input
+            .get("apply")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !apply {
+            return Err(mk_err(
+                ErrorKind::PolicyDenied,
+                "Must set apply=true to finalize a release candidate",
+                &audit_id,
+            ));
+        }
+
+        let repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let feature = input
+            .get("feature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let repo_name = repo_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("default")
+            .to_string();
+
+        let cfg = match stitch::config::find_and_load() {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Config: {}", e),
+                    &audit_id,
+                ))
+            }
+        };
+        let workspace_root = std::path::Path::new(&cfg.workspace);
+
+        // Load wallet (must exist)
+        let mut wallet = match workloop::load_wallet(workspace_root, feature) {
+            Ok(w) => w,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Wallet not found: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Get RC change ID from wallet
+        let rc_change_id = wallet
+            .repos
+            .iter()
+            .find(|r| r.name == repo_name)
+            .and_then(|r| r.release_candidate_change_id.clone())
+            .ok_or_else(|| {
+                mk_err(
+                    ErrorKind::NotFound,
+                    "No release candidate found in wallet for this repo",
+                    &audit_id,
+                )
+            })?;
+
+        let backend = match workloop::detect_backend(&repo_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Backend detection failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        let rc_candidate = workloop::ReleaseCandidate {
+            repo_name: repo_name.clone(),
+            change_id: rc_change_id,
+            commit_id: String::new(),
+            exportable_git_commit_id: None,
+            checks_status: workloop::CheckStatus::NotRun,
+        };
+
+        let finalized = match backend.finalize_candidate(&repo_path, rc_candidate) {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Finalization failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Update wallet
+        wallet.state = workloop::LoopState::ReleaseFixedPoint;
+        wallet.next_valid_actions =
+            workloop::valid_actions_for_state(&workloop::LoopState::ReleaseFixedPoint);
+        wallet.updated_at = workloop::Timestamp::now();
+        wallet.revision += 1;
+
+        if let Err(e) = workloop::save_wallet(workspace_root, &wallet) {
+            return Err(mk_err(
+                ErrorKind::Internal,
+                &format!("Failed to save wallet: {e}"),
+                &audit_id,
+            ));
+        }
+
+        let result = ToolResult::ok(
+            serde_json::to_value(&finalized).unwrap_or_default(),
+            format!(
+                "RC finalized: {} ({})",
+                finalized.repo_name, finalized.commit_id
+            ),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loop publish tool
+// ---------------------------------------------------------------------------
+
+pub struct StitchLoopPublishTool;
+
+impl McpTool for StitchLoopPublishTool {
+    fn name(&self) -> &str {
+        "stitch.loop_publish"
+    }
+    fn description(&self) -> &str {
+        "Publish feature changes (push to remotes)"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::Network)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "repo": { "type": "string", "description": "Repo path (default: current dir)" },
+            "feature": { "type": "string", "description": "Feature name for the wallet" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let _repo_path = input
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .map(|s| std::path::Path::new(s).to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let feature = input
+            .get("feature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+
+        let cfg = match stitch::config::find_and_load() {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Config: {}", e),
+                    &audit_id,
+                ))
+            }
+        };
+        let workspace_root = std::path::Path::new(&cfg.workspace);
+
+        // Load wallet (must exist)
+        let mut wallet = match workloop::load_wallet(workspace_root, feature) {
+            Ok(w) => w,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::NotFound,
+                    &format!("Wallet not found: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Build publish refs from wallet repos
+        let refs = workloop::PublishRefs {
+            targets: wallet
+                .repos
+                .iter()
+                .map(|r| workloop::PublishTarget {
+                    name: r.name.clone(),
+                    path: r.path.clone(),
+                    bookmark: r.main_bookmark.clone(),
+                })
+                .collect(),
+            repos: Vec::new(),
+            main_bookmarks: Vec::new(),
+        };
+
+        // Use JjBackend (its publish method already handles Git-only fallback)
+        let backend = workloop::JjBackend::new();
+        let publish_result = match backend.publish(refs) {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(mk_err(
+                    ErrorKind::Internal,
+                    &format!("Publish failed: {e}"),
+                    &audit_id,
+                ))
+            }
+        };
+
+        // Update wallet
+        wallet.state = workloop::LoopState::Published;
+        wallet.next_valid_actions =
+            workloop::valid_actions_for_state(&workloop::LoopState::Published);
+        wallet.updated_at = workloop::Timestamp::now();
+        wallet.revision += 1;
+
+        if let Err(e) = workloop::save_wallet(workspace_root, &wallet) {
+            return Err(mk_err(
+                ErrorKind::Internal,
+                &format!("Failed to save wallet: {e}"),
+                &audit_id,
+            ));
+        }
+
+        let results: Vec<Value> = publish_result
+            .pushed
+            .iter()
+            .map(|r| json!({"target": r, "success": true, "message": "pushed"}))
+            .chain(
+                publish_result
+                    .failed
+                    .iter()
+                    .map(|(r, e)| json!({"target": r, "success": false, "message": e})),
+            )
+            .collect();
+
+        let out = json!({
+            "results": results,
+            "pushed": publish_result.pushed,
+            "failed_count": publish_result.failed.len()
+        });
+
+        let result = ToolResult::ok(
+            out,
+            format!(
+                "Published: {} pushed, {} failed",
+                publish_result.pushed.len(),
+                publish_result.failed.len()
+            ),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
     }
 }
 
