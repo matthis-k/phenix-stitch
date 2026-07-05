@@ -201,6 +201,24 @@ mod tests {
         }
     }
 
+    fn node_with(
+        id: &str,
+        kind: NodeKind,
+        role: RepoRole,
+        layer: Option<u32>,
+        path: &str,
+    ) -> NodeSpec {
+        NodeSpec {
+            id: id.into(),
+            path: path.into(),
+            repo_url: None,
+            kind,
+            role,
+            layer,
+            is_root: false,
+        }
+    }
+
     #[test]
     fn canonical_graph_uses_stable_digraph_and_preserves_input_name() {
         let mut draft = WorkspaceGraphDraft::default();
@@ -223,5 +241,161 @@ mod tests {
                 .map(String::as_str),
             Some("provider-pin")
         );
+    }
+
+    #[test]
+    fn canonical_graph_preserves_layers() {
+        // Canonicalization must preserve each node's layer metadata
+        let mut draft = WorkspaceGraphDraft::default();
+        draft.nodes.insert(
+            "pins".into(),
+            node_with(
+                "pins",
+                NodeKind::Pins,
+                RepoRole::Pins,
+                Some(0),
+                "flakes/00-pins/pins",
+            ),
+        );
+        draft.nodes.insert(
+            "producer".into(),
+            node_with(
+                "producer",
+                NodeKind::ToolProvider,
+                RepoRole::Producer,
+                Some(2),
+                "flakes/02-producers/producer",
+            ),
+        );
+        draft.nodes.insert(
+            "consumer".into(),
+            node_with(
+                "consumer",
+                NodeKind::HostConsumer,
+                RepoRole::Consumer,
+                Some(5),
+                "flakes/05-consumers/consumer",
+            ),
+        );
+        draft.edges.push(EdgeSpec {
+            from: "producer".into(),
+            to: "pins".into(),
+            kind: EdgeKind::FlakeInput {
+                input_name: "pins".into(),
+                lock_file: "flake.lock".into(),
+            },
+        });
+        draft.edges.push(EdgeSpec {
+            from: "consumer".into(),
+            to: "producer".into(),
+            kind: EdgeKind::FlakeInput {
+                input_name: "producer".into(),
+                lock_file: "flake.lock".into(),
+            },
+        });
+
+        let graph = CanonicalWorkspaceGraph::from_draft(draft).unwrap();
+
+        // All three layers must be preserved
+        assert_eq!(graph.node("pins").unwrap().layer, Some(0));
+        assert_eq!(graph.node("producer").unwrap().layer, Some(2));
+        assert_eq!(graph.node("consumer").unwrap().layer, Some(5));
+
+        // Nodes can be grouped by layer through iteration
+        let ids_by_layer: Vec<_> = {
+            let mut pairs: Vec<_> = graph
+                .node_ids()
+                .map(|id| {
+                    let node = graph.node(id).unwrap();
+                    (node.layer.unwrap_or(99), id.as_str())
+                })
+                .collect();
+            pairs.sort();
+            pairs
+        };
+        assert_eq!(ids_by_layer[0], (0, "pins"));
+        assert_eq!(ids_by_layer[1], (2, "producer"));
+        assert_eq!(ids_by_layer[2], (5, "consumer"));
+    }
+
+    #[test]
+    fn canonical_graph_provider_consumer_edge_direction() {
+        // The canonical graph must correctly model provider-to-consumer direction.
+        // Edges go consumer -> provider (consumer depends on provider).
+        let mut draft = WorkspaceGraphDraft::default();
+        draft.nodes.insert(
+            "pins".into(),
+            node_with(
+                "pins",
+                NodeKind::Pins,
+                RepoRole::Pins,
+                Some(0),
+                "flakes/00-pins/pins",
+            ),
+        );
+        draft.nodes.insert(
+            "producer".into(),
+            node_with(
+                "producer",
+                NodeKind::ToolProvider,
+                RepoRole::Producer,
+                Some(2),
+                "flakes/02-producers/producer",
+            ),
+        );
+        draft.nodes.insert(
+            "consumer".into(),
+            node_with(
+                "consumer",
+                NodeKind::HostConsumer,
+                RepoRole::Consumer,
+                Some(5),
+                "flakes/05-consumers/consumer",
+            ),
+        );
+        // Consumer -> Producer -> Pins
+        draft.edges.push(EdgeSpec {
+            from: "producer".into(),
+            to: "pins".into(),
+            kind: EdgeKind::FlakeInput {
+                input_name: "pins".into(),
+                lock_file: "flake.lock".into(),
+            },
+        });
+        draft.edges.push(EdgeSpec {
+            from: "consumer".into(),
+            to: "producer".into(),
+            kind: EdgeKind::FlakeInput {
+                input_name: "producer".into(),
+                lock_file: "flake.lock".into(),
+            },
+        });
+
+        let graph = CanonicalWorkspaceGraph::from_draft(draft).unwrap();
+
+        // Consumer depends on producer
+        let consumer_deps = graph.dependencies_of("consumer");
+        assert_eq!(consumer_deps.len(), 1);
+        assert_eq!(consumer_deps[0].to, "producer");
+        assert!(consumer_deps[0].is_semantic_dependency());
+
+        // Producer depends on pins
+        let producer_deps = graph.dependencies_of("producer");
+        assert_eq!(producer_deps.len(), 1);
+        assert_eq!(producer_deps[0].to, "pins");
+        assert!(producer_deps[0].is_semantic_dependency());
+
+        // Consumer's dependents (things depending on consumer) should be empty
+        let consumer_dependents = graph.dependents_of("consumer");
+        assert!(consumer_dependents.is_empty());
+
+        // Pins should have two dependents (producer and consumer transitively)
+        let pins_dependents = graph.dependents_of("pins");
+        assert_eq!(pins_dependents.len(), 1);
+        assert_eq!(pins_dependents[0].from, "producer");
+
+        // Semantic edges should exclude submodule edges
+        let all_semantic = graph.semantic_edges();
+        assert_eq!(all_semantic.len(), 2);
     }
 }

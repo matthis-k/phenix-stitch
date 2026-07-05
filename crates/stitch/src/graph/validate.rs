@@ -234,6 +234,41 @@ pub fn validate_graph(graph: &WorkspaceDag, opts: &ValidateOptions) -> GraphVali
         }
     }
 
+    // 9. URL mismatch check: repo URL should match the node id
+    for node in graph.nodes.values() {
+        if let Some(ref repo_url) = node.repo_url {
+            if !repo_url.is_empty() {
+                let expected_name = url_repo_name(repo_url).unwrap_or("");
+                if !expected_name.is_empty() && expected_name != node.id {
+                    diagnostics.push(GraphDiagnostic::error(
+                        "url_mismatch",
+                        format!(
+                            "'{}' has repo URL '{}' which resolves to name '{}', expected '{}'",
+                            node.id, repo_url, expected_name, node.id
+                        ),
+                        vec![node.id.clone()],
+                    ));
+                }
+            }
+        }
+    }
+
+    // 10. Missing repo path check: warn when a configured path does not exist on disk
+    for node in graph.nodes.values() {
+        let path_str = node.path.to_string_lossy();
+        if !path_str.is_empty() && !node.path.exists() {
+            diagnostics.push(GraphDiagnostic::warn(
+                "missing_repo_path",
+                format!(
+                    "'{}' has path '{}' which does not exist on disk",
+                    node.id,
+                    node.path.display()
+                ),
+                vec![node.id.clone()],
+            ));
+        }
+    }
+
     // Merge existing diagnostics from graph construction
     let all_diagnostics: Vec<GraphDiagnostic> = graph
         .diagnostics
@@ -344,6 +379,22 @@ fn node_kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::External => "external",
         NodeKind::Unknown => "unknown",
     }
+}
+
+/// Extract the repository name from a git remote URL.
+///
+/// Handles HTTPS-style (`https://github.com/org/repo.git` → `repo`),
+/// SSH-style (`git@github.com:org/repo.git` → `repo`),
+/// and plain paths.
+fn url_repo_name(url: &str) -> Option<&str> {
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    // SSH-style: git@github.com:org/repo
+    if let Some(idx) = url.find(':') {
+        let after = &url[idx + 1..];
+        return after.split('/').last();
+    }
+    // HTTPS-style or path-style
+    url.split('/').last().filter(|s| !s.is_empty())
 }
 
 enum Mark {
@@ -670,5 +721,565 @@ mod tests {
 
         let p = Path::new("some/other/path");
         assert_eq!(folder_layer(p), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Path / layer mismatch tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_path_layer_mismatch() {
+        // Repo with layer=2 but path lives in flakes/05-consumers/
+        let nodes = vec![
+            make_node(
+                "phenix-host",
+                NodeKind::HostConsumer,
+                RepoRole::Consumer,
+                Some(2),
+                false,
+            ),
+            make_node("pins", NodeKind::Pins, RepoRole::Pins, Some(0), false),
+        ];
+        // Assign a path that indicates layer 5
+        let mut node_map = BTreeMap::new();
+        for mut n in nodes {
+            if n.id == "phenix-host" {
+                n.path = PathBuf::from("flakes/05-consumers/phenix-host");
+            }
+            node_map.insert(n.id.clone(), n);
+        }
+        let edges = vec![make_edge("phenix-host", "pins")];
+        let graph = WorkspaceDag {
+            nodes: node_map,
+            edges,
+            external_inputs: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "path_layer_mismatch"));
+    }
+
+    #[test]
+    fn test_path_layer_match_ok() {
+        // Repo with layer=5 and path in flakes/05-consumers/ — should pass
+        let nodes = vec![
+            make_node(
+                "phenix-host",
+                NodeKind::HostConsumer,
+                RepoRole::Consumer,
+                Some(5),
+                false,
+            ),
+            make_node("pins", NodeKind::Pins, RepoRole::Pins, Some(0), false),
+        ];
+        let mut node_map = BTreeMap::new();
+        for mut n in nodes {
+            if n.id == "phenix-host" {
+                n.path = PathBuf::from("flakes/05-consumers/phenix-host");
+            }
+            node_map.insert(n.id.clone(), n);
+        }
+        let edges = vec![make_edge("phenix-host", "pins")];
+        let graph = WorkspaceDag {
+            nodes: node_map,
+            edges,
+            external_inputs: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(report.valid);
+        assert!(!report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "path_layer_mismatch"));
+    }
+
+    #[test]
+    fn test_path_layer_mismatch_ignores_root() {
+        // Root nodes should be exempt from path/layer checks
+        let nodes = vec![make_node(
+            "phenix",
+            NodeKind::WorkspaceRoot,
+            RepoRole::Root,
+            Some(6),
+            true,
+        )];
+        let mut node_map = BTreeMap::new();
+        for mut n in nodes {
+            n.path = PathBuf::from("flakes/00-pins/phenix"); // non-root layer in path
+            node_map.insert(n.id.clone(), n);
+        }
+        let graph = WorkspaceDag {
+            nodes: node_map,
+            edges: Vec::new(),
+            external_inputs: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        // Root should not trigger path_layer_mismatch
+        assert!(!report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "path_layer_mismatch"));
+        // And the graph should be valid
+        assert!(report.valid);
+    }
+
+    // -----------------------------------------------------------------------
+    // Same-layer dependency tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_same_layer_violation_detected() {
+        // Two repos at the same layer (layer=2) depending on each other
+        // internally: both edges should fail layer_violation
+        let nodes = vec![
+            make_node_old("tools-a", NodeKind::ToolProvider, Some(2), false),
+            make_node_old("tools-b", NodeKind::ToolProvider, Some(2), false),
+        ];
+        let edges = vec![make_edge("tools-a", "tools-b")];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "layer_violation"));
+    }
+
+    #[test]
+    fn test_same_layer_violation_mutual() {
+        // Mutual dependencies at the same layer
+        let nodes = vec![
+            make_node_old("layer2-a", NodeKind::ToolProvider, Some(2), false),
+            make_node_old("layer2-b", NodeKind::PackageProvider, Some(2), false),
+        ];
+        let edges = vec![
+            make_edge("layer2-a", "layer2-b"),
+            make_edge("layer2-b", "layer2-a"),
+        ];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        let layer_violations: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "layer_violation")
+            .collect();
+        assert!(layer_violations.len() >= 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // URL mismatch tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_url_mismatch_detected() {
+        // Node id "phenix-tools" but URL points to a different repo
+        let nodes = vec![WorkspaceNode {
+            id: "phenix-tools".to_string(),
+            path: PathBuf::from("flakes/02-producers/phenix-tools"),
+            repo_url: Some("https://github.com/other-org/wrong-repo.git".to_string()),
+            kind: NodeKind::ToolProvider,
+            role: RepoRole::Producer,
+            layer: Some(2),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
+    }
+
+    #[test]
+    fn test_url_mismatch_ssh_style() {
+        // SSH-style URL with wrong repo name
+        let nodes = vec![WorkspaceNode {
+            id: "phenix-tools".to_string(),
+            path: PathBuf::from("flakes/02-producers/phenix-tools"),
+            repo_url: Some("git@github.com:other-org/wrong-repo.git".to_string()),
+            kind: NodeKind::ToolProvider,
+            role: RepoRole::Producer,
+            layer: Some(2),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
+    }
+
+    #[test]
+    fn test_url_mismatch_ok() {
+        // URL matches node id
+        let nodes = vec![WorkspaceNode {
+            id: "phenix-tools".to_string(),
+            path: PathBuf::from("flakes/02-producers/phenix-tools"),
+            repo_url: Some("https://github.com/matthis-k/phenix-tools.git".to_string()),
+            kind: NodeKind::ToolProvider,
+            role: RepoRole::Producer,
+            layer: Some(2),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(report.valid);
+        assert!(!report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
+    }
+
+    #[test]
+    fn test_url_mismatch_ok_ssh() {
+        // SSH-style URL matching
+        let nodes = vec![WorkspaceNode {
+            id: "phenix-tools".to_string(),
+            path: PathBuf::from("flakes/02-producers/phenix-tools"),
+            repo_url: Some("git@github.com:matthis-k/phenix-tools.git".to_string()),
+            kind: NodeKind::ToolProvider,
+            role: RepoRole::Producer,
+            layer: Some(2),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(report.valid);
+        assert!(!report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
+    }
+
+    #[test]
+    fn test_url_mismatch_ok_no_git_suffix() {
+        // URL without .git suffix
+        let nodes = vec![WorkspaceNode {
+            id: "phenix-host".to_string(),
+            path: PathBuf::from("flakes/05-consumers/phenix-host"),
+            repo_url: Some("https://github.com/matthis-k/phenix-host".to_string()),
+            kind: NodeKind::HostConsumer,
+            role: RepoRole::Consumer,
+            layer: Some(5),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(report.valid);
+        assert!(!report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Missing repo path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_missing_repo_path_detected() {
+        // Path does not exist on disk
+        let nodes = vec![WorkspaceNode {
+            id: "phenix-tools".to_string(),
+            path: PathBuf::from("/tmp/__stitch_test_nonexistent_path_that_should_not_exist__"),
+            repo_url: None,
+            kind: NodeKind::ToolProvider,
+            role: RepoRole::Producer,
+            layer: Some(2),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report
+            .diagnostics
+            .iter()
+            .any(|d| d.code.contains("path") && d.severity == DiagnosticSeverity::Error));
+        // It should be a warning for missing path
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "missing_repo_path"));
+    }
+
+    #[test]
+    fn test_missing_repo_path_skips_empty_path() {
+        // Nodes with empty path (PathBuf::new()) must not trigger the check
+        let nodes = vec![make_node_old("pins", NodeKind::Pins, Some(0), false)];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "missing_repo_path"));
+    }
+
+    #[test]
+    fn test_missing_repo_path_ok_with_tempdir() {
+        // Path exists as a temp directory — must pass
+        let dir = tempfile::tempdir().expect("tempdir creation");
+        let path = dir.path().to_path_buf();
+        let nodes = vec![WorkspaceNode {
+            id: "existing-repo".to_string(),
+            path,
+            repo_url: None,
+            kind: NodeKind::ToolProvider,
+            role: RepoRole::Producer,
+            layer: Some(2),
+            is_root: false,
+        }];
+        let graph = make_graph(nodes, Vec::new());
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "missing_repo_path"));
+    }
+
+    // -----------------------------------------------------------------------
+    // URL extraction unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_url_repo_name_https() {
+        assert_eq!(
+            url_repo_name("https://github.com/matthis-k/phenix-tools.git"),
+            Some("phenix-tools")
+        );
+    }
+
+    #[test]
+    fn test_url_repo_name_https_no_git_suffix() {
+        assert_eq!(
+            url_repo_name("https://github.com/matthis-k/phenix-host"),
+            Some("phenix-host")
+        );
+    }
+
+    #[test]
+    fn test_url_repo_name_ssh() {
+        assert_eq!(
+            url_repo_name("git@github.com:matthis-k/phenix-tools.git"),
+            Some("phenix-tools")
+        );
+    }
+
+    #[test]
+    fn test_url_repo_name_ssh_no_git_suffix() {
+        assert_eq!(
+            url_repo_name("git@github.com:matthis-k/phenix-host"),
+            Some("phenix-host")
+        );
+    }
+
+    #[test]
+    fn test_url_repo_name_plain_path() {
+        assert_eq!(url_repo_name("/some/path/to/repo-name"), Some("repo-name"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Valid workspace with path/layer consistency
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_valid_workspace_full_path_layer_consistency() {
+        // Full workspace where all paths and layers match
+        let node_specs: Vec<(&str, NodeKind, RepoRole, u32, &str, Option<&str>, bool)> = vec![
+            (
+                "phenix-pins",
+                NodeKind::Pins,
+                RepoRole::Pins,
+                0,
+                "flakes/00-pins/phenix-pins",
+                Some("https://github.com/matthis-k/phenix-pins.git"),
+                false,
+            ),
+            (
+                "phenix-packages",
+                NodeKind::PackageProvider,
+                RepoRole::PkgsAggregator,
+                4,
+                "flakes/04-packages/phenix-packages",
+                None,
+                false,
+            ),
+            (
+                "phenix-tools",
+                NodeKind::ToolProvider,
+                RepoRole::Producer,
+                2,
+                "flakes/02-producers/phenix-tools",
+                Some("https://github.com/matthis-k/phenix-tools.git"),
+                false,
+            ),
+            (
+                "phenix-hosts",
+                NodeKind::HostConsumer,
+                RepoRole::Consumer,
+                5,
+                "flakes/05-consumers/phenix-hosts",
+                None,
+                false,
+            ),
+            (
+                "phenix",
+                NodeKind::WorkspaceRoot,
+                RepoRole::Root,
+                6,
+                "",
+                None,
+                true,
+            ),
+        ];
+
+        let mut nodes = Vec::new();
+        for (id, kind, role, layer, path, url, is_root) in &node_specs {
+            nodes.push(WorkspaceNode {
+                id: id.to_string(),
+                path: PathBuf::from(path),
+                repo_url: url.map(|s| s.to_string()),
+                kind: *kind,
+                role: *role,
+                layer: Some(*layer),
+                is_root: *is_root,
+            });
+        }
+
+        let edges = vec![
+            make_edge("phenix-packages", "phenix-pins"),
+            make_edge("phenix-tools", "phenix-pins"),
+            make_edge("phenix-hosts", "phenix-packages"),
+            make_edge("phenix-hosts", "phenix-tools"),
+            make_edge("phenix", "phenix-packages"),
+            make_edge("phenix", "phenix-tools"),
+            make_edge("phenix", "phenix-hosts"),
+        ];
+
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(
+            report.valid,
+            "Expected valid workspace, got diagnostics: {:#?}",
+            report
+                .diagnostics
+                .iter()
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing rule edge-case coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_duplicate_edge_warning() {
+        let nodes = vec![
+            make_node_old("consumer", NodeKind::HostConsumer, Some(5), false),
+            make_node_old("provider", NodeKind::Pins, Some(0), false),
+        ];
+        let edges = vec![
+            make_edge("consumer", "provider"),
+            make_edge("consumer", "provider"),
+        ];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        let dups: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "duplicate_edge")
+            .collect();
+        assert_eq!(dups.len(), 1);
+    }
+
+    #[test]
+    fn test_unknown_source_node() {
+        let nodes = vec![make_node_old("known", NodeKind::Pins, Some(0), false)];
+        let edges = vec![make_edge("unknown", "known")];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "unknown_source_node"));
+    }
+
+    #[test]
+    fn test_unknown_target_node() {
+        let nodes = vec![make_node_old("known", NodeKind::Pins, Some(0), false)];
+        let edges = vec![make_edge("known", "unknown")];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "unknown_target_node"));
+    }
+
+    #[test]
+    fn test_strict_mode_missing_layer_info() {
+        // In strict mode, missing layers on edges produce a Warning
+        let nodes = vec![
+            make_node_old("a", NodeKind::Unknown, None, false),
+            make_node_old("b", NodeKind::Unknown, None, false),
+        ];
+        let edges = vec![make_edge("a", "b")];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions { strict: true });
+        let missing: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "missing_layer")
+            .collect();
+        assert!(!missing.is_empty());
+        assert_eq!(missing[0].severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn test_non_strict_mode_missing_layer_info() {
+        // In non-strict mode, missing layers produce Info
+        let nodes = vec![
+            make_node_old("a", NodeKind::Unknown, None, false),
+            make_node_old("b", NodeKind::Unknown, None, false),
+        ];
+        let edges = vec![make_edge("a", "b")];
+        let graph = make_graph(nodes, edges);
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        let missing: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "missing_layer")
+            .collect();
+        assert!(!missing.is_empty());
+        assert_eq!(missing[0].severity, DiagnosticSeverity::Info);
+    }
+
+    #[test]
+    fn test_external_input_multi_owner_warning() {
+        let nodes = vec![
+            make_node_old("repo-a", NodeKind::ToolProvider, Some(2), false),
+            make_node_old("repo-b", NodeKind::HostConsumer, Some(5), false),
+        ];
+        let external_inputs = vec![
+            crate::graph::ExternalInput {
+                owner_node: "repo-a".into(),
+                input_name: "nixpkgs".into(),
+                locked_type: Some("github".into()),
+                url_or_repo: None,
+                rev: None,
+            },
+            crate::graph::ExternalInput {
+                owner_node: "repo-b".into(),
+                input_name: "nixpkgs".into(),
+                locked_type: Some("github".into()),
+                url_or_repo: None,
+                rev: None,
+            },
+        ];
+        let mut graph = make_graph(nodes, Vec::new());
+        graph.external_inputs = external_inputs;
+        let report = validate_graph(&graph, &ValidateOptions::default());
+        let multi: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "external_input_multi_owner")
+            .collect();
+        assert_eq!(multi.len(), 1);
     }
 }
