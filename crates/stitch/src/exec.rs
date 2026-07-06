@@ -353,20 +353,12 @@ pub fn install_hooks_for_repo(
         "nix develop .#default --command tend check --profile git-hook --staged --affected-dag"
             .to_string()
     } else {
-        format!(
-            "nix develop {root}/#default --command tend check --root {sub} --profile git-hook --staged",
-            root = workspace_root.display(),
-            sub = sub_path.display(),
-        )
+        "nix develop .#default --command tend check --profile git-hook --staged".to_string()
     };
     let pre_push_cmd = if is_root {
         "nix develop .#default --command tend check --profile pre-push --affected-dag".to_string()
     } else {
-        format!(
-            "nix develop {root}/#default --command tend check --root {sub} --profile pre-push",
-            root = workspace_root.display(),
-            sub = sub_path.display(),
-        )
+        "nix develop .#default --command tend check --profile pre-push".to_string()
     };
 
     for (hook_name, hook_cmd) in [("pre-commit", pre_commit_cmd), ("pre-push", pre_push_cmd)] {
