@@ -3,10 +3,19 @@
   "node": {
     "id": "phenix-stitch",
     "description": "Verify the phenix-stitch workspace",
-    "tags": ["tooling", "foundation"],
+    "tags": [
+      "tooling",
+      "foundation"
+    ],
     "when": {
       "changed": {
-        "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs", "modules/**/*.nix", ".tend.json"]
+        "paths": [
+          "Cargo.toml",
+          "Cargo.lock",
+          "crates/**/*.rs",
+          "modules/**/*.nix",
+          ".tend.json"
+        ]
       }
     },
     "tasks": [
@@ -15,15 +24,33 @@
         "description": "Check Rust formatting",
         "phase": "verify",
         "kind": "command",
-        "command": ["cargo", "fmt", "--all", "--check"],
-        "profiles": ["git-hook", "pre-push", "manual", "nix-check"],
-        "tags": ["format", "rust"],
+        "command": [
+          "cargo",
+          "fmt",
+          "--all",
+          "--check"
+        ],
+        "profiles": [
+          "git-hook",
+          "pre-push",
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "format",
+          "rust"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs", "modules/**/*.nix"]
+            "paths": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "crates/**/*.rs",
+              "modules/**/*.nix"
+            ]
           }
         }
       },
@@ -32,15 +59,32 @@
         "description": "Check that the workspace compiles cleanly",
         "phase": "verify",
         "kind": "command",
-        "command": ["cargo", "check", "--quiet", "--workspace", "--all-targets"],
-        "profiles": ["pre-push", "manual", "nix-check"],
-        "tags": ["rust", "compile"],
+        "command": [
+          "cargo",
+          "check",
+          "--quiet",
+          "--workspace",
+          "--all-targets"
+        ],
+        "profiles": [
+          "pre-push",
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "rust",
+          "compile"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs"]
+            "paths": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "crates/**/*.rs"
+            ]
           }
         }
       },
@@ -49,15 +93,35 @@
         "description": "Run clippy with deny-warnings on workspace",
         "phase": "verify",
         "kind": "command",
-        "command": ["cargo", "clippy", "--quiet", "--workspace", "--all-targets", "--", "-D", "warnings"],
-        "profiles": ["pre-push", "manual", "nix-check"],
-        "tags": ["rust", "lint"],
+        "command": [
+          "cargo",
+          "clippy",
+          "--quiet",
+          "--workspace",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "profiles": [
+          "pre-push",
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "rust",
+          "lint"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs"]
+            "paths": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "crates/**/*.rs"
+            ]
           }
         }
       },
@@ -66,15 +130,29 @@
         "description": "Run Rust tests",
         "phase": "verify",
         "kind": "command",
-        "command": ["cargo", "test", "--workspace"],
-        "profiles": ["manual", "nix-check"],
-        "tags": ["rust", "test"],
+        "command": [
+          "cargo",
+          "test",
+          "--workspace"
+        ],
+        "profiles": [
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "rust",
+          "test"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs"]
+            "paths": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "crates/**/*.rs"
+            ]
           }
         }
       },
@@ -83,15 +161,29 @@
         "description": "Check Nix files are formatted correctly",
         "phase": "verify",
         "kind": "command",
-        "command": ["bash", "-c", "find modules -name '*.nix' -print0 | xargs -0 -r nixfmt --check && find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt --check"],
-        "profiles": ["git-hook", "pre-push", "manual", "nix-check"],
-        "tags": ["nix", "format"],
+        "command": [
+          "bash",
+          "-c",
+          "find modules -name '*.nix' -print0 | xargs -0 -r nixfmt --check && find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt --check"
+        ],
+        "profiles": [
+          "git-hook",
+          "pre-push",
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "nix",
+          "format"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["modules/**/*.nix"]
+            "paths": [
+              "modules/**/*.nix"
+            ]
           }
         }
       },
@@ -100,15 +192,28 @@
         "description": "Lint Nix files with statix",
         "phase": "verify",
         "kind": "command",
-        "command": ["statix", "check"],
-        "profiles": ["git-hook", "pre-push", "manual", "nix-check"],
-        "tags": ["nix", "lint"],
+        "command": [
+          "statix",
+          "check"
+        ],
+        "profiles": [
+          "git-hook",
+          "pre-push",
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "nix",
+          "lint"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["modules/**/*.nix"]
+            "paths": [
+              "modules/**/*.nix"
+            ]
           }
         }
       },
@@ -117,15 +222,30 @@
         "description": "Find and report dead Nix code",
         "phase": "verify",
         "kind": "command",
-        "command": ["deadnix", "--fail", "--no-lambda-arg", "--no-lambda-pattern-names"],
-        "profiles": ["git-hook", "pre-push", "manual", "nix-check"],
-        "tags": ["nix", "cleanup"],
+        "command": [
+          "deadnix",
+          "--fail",
+          "--no-lambda-arg",
+          "--no-lambda-pattern-names"
+        ],
+        "profiles": [
+          "git-hook",
+          "pre-push",
+          "manual",
+          "nix-check"
+        ],
+        "tags": [
+          "nix",
+          "cleanup"
+        ],
         "sandbox_safe": true,
         "mutates": false,
         "always": true,
         "when": {
           "changed": {
-            "paths": ["modules/**/*.nix"]
+            "paths": [
+              "modules/**/*.nix"
+            ]
           }
         }
       },
@@ -134,9 +254,19 @@
         "description": "Full Nix flake evaluation check",
         "phase": "verify",
         "kind": "command",
-        "command": ["nix", "flake", "check"],
-        "profiles": ["pre-push", "manual"],
-        "tags": ["nix", "full"],
+        "command": [
+          "nix",
+          "flake",
+          "check"
+        ],
+        "profiles": [
+          "pre-push",
+          "manual"
+        ],
+        "tags": [
+          "nix",
+          "full"
+        ],
         "sandbox_safe": false,
         "mutates": false,
         "interactive": false,
@@ -147,14 +277,28 @@
         "description": "Fix Rust formatting",
         "phase": "fix",
         "kind": "command",
-        "command": ["cargo", "fmt", "--all"],
-        "profiles": ["fix"],
-        "tags": ["format", "rust", "fix"],
+        "command": [
+          "cargo",
+          "fmt",
+          "--all"
+        ],
+        "profiles": [
+          "fix"
+        ],
+        "tags": [
+          "format",
+          "rust",
+          "fix"
+        ],
         "sandbox_safe": false,
         "mutates": true,
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs"]
+            "paths": [
+              "Cargo.toml",
+              "Cargo.lock",
+              "crates/**/*.rs"
+            ]
           }
         }
       },
@@ -163,14 +307,26 @@
         "description": "Auto-format Nix files",
         "phase": "fix",
         "kind": "command",
-        "command": ["bash", "-c", "find modules -name '*.nix' -print0 | xargs -0 -r nixfmt && find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt"],
-        "profiles": ["fix"],
-        "tags": ["nix", "format", "fix"],
+        "command": [
+          "bash",
+          "-c",
+          "find modules -name '*.nix' -print0 | xargs -0 -r nixfmt && find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt"
+        ],
+        "profiles": [
+          "fix"
+        ],
+        "tags": [
+          "nix",
+          "format",
+          "fix"
+        ],
         "sandbox_safe": false,
         "mutates": true,
         "when": {
           "changed": {
-            "paths": ["modules/**/*.nix"]
+            "paths": [
+              "modules/**/*.nix"
+            ]
           }
         }
       },
@@ -179,14 +335,25 @@
         "description": "Auto-fix statix warnings where safe",
         "phase": "fix",
         "kind": "command",
-        "command": ["statix", "fix"],
-        "profiles": ["fix"],
-        "tags": ["nix", "lint", "fix"],
+        "command": [
+          "statix",
+          "fix"
+        ],
+        "profiles": [
+          "fix"
+        ],
+        "tags": [
+          "nix",
+          "lint",
+          "fix"
+        ],
         "sandbox_safe": false,
         "mutates": true,
         "when": {
           "changed": {
-            "paths": ["modules/**/*.nix"]
+            "paths": [
+              "modules/**/*.nix"
+            ]
           }
         }
       }
