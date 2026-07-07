@@ -111,6 +111,7 @@ fn main() {
             dirty,
             upstream,
             downstream,
+            run_tend,
             dry_run,
             json,
         } => cmd_verify(
@@ -121,6 +122,7 @@ fn main() {
             *dirty,
             *upstream,
             *downstream,
+            *run_tend,
             *dry_run,
             *json,
         ),
@@ -511,6 +513,7 @@ fn cmd_verify(
     dirty: bool,
     upstream: bool,
     downstream: bool,
+    run_tend: bool,
     dry_run: bool,
     json: bool,
 ) -> Result<(), String> {
@@ -545,15 +548,18 @@ fn cmd_verify(
 
     let order = exec::OrderMode::ProvidersFirst;
 
-    let steps = vec![exec::ExecutionStep {
-        id: "tend-check".to_string(),
-        mode: exec::ExecutionMode::ReadOnly,
-        kind: exec::StepKind::Builtin {
-            name: "tend.check".to_string(),
-            args: serde_json::json!({"profile": "pre-push"}),
-        },
-        condition: None,
-    }];
+    let mut steps = Vec::new();
+    if run_tend {
+        steps.push(exec::ExecutionStep {
+            id: "tend-check".to_string(),
+            mode: exec::ExecutionMode::ReadOnly,
+            kind: exec::StepKind::Builtin {
+                name: "tend.check".to_string(),
+                args: serde_json::json!({"profile": "pre-push"}),
+            },
+            condition: None,
+        });
+    }
 
     let scope = exec::ExecutionScope {
         selection,
@@ -1194,6 +1200,8 @@ enum Commands {
         upstream: bool,
         #[arg(long, help = "Include downstream consumers")]
         downstream: bool,
+        #[arg(long, help = "Run tend checks (default: true)")]
+        run_tend: bool,
         #[arg(long, help = "Dry run (show plan, no mutations)")]
         dry_run: bool,
         #[arg(long, help = "Output as JSON")]
@@ -1857,6 +1865,21 @@ fn cmd_push(dry_run: bool, json_output: bool) -> Result<(), String> {
         return Ok(());
     }
 
+    // Pre-push mutation safety checks
+    for (node, _) in &to_push {
+        if let Err(e) = git::check_mutation_safety(&node.path) {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "error": format!("Cannot push '{}': {}", node.name, e),
+                    "pushed": []
+                })).unwrap());
+            } else {
+                eprintln!("Cannot push '{}': {}", node.name, e);
+            }
+            return Ok(());
+        }
+    }
+
     if dry_run {
         if json_output {
             let nodes: Vec<serde_json::Value> = to_push
@@ -2063,6 +2086,13 @@ fn cmd_commit(
             println!("Nothing to commit.");
         }
         return Ok(());
+    }
+
+    // Pre-commit mutation safety checks
+    for node in &dirty_nodes {
+        if let Err(e) = git::check_mutation_safety(&node.path) {
+            return Err(format!("Cannot commit '{}': {}", node.name, e));
+        }
     }
 
     let _commit_names: std::collections::BTreeSet<String> =
@@ -2313,6 +2343,13 @@ fn cmd_sync(
             println!("Nothing to sync.");
         }
         return Ok(());
+    }
+
+    // Pre-sync mutation safety checks
+    for node in &sync_nodes {
+        if let Err(e) = git::check_mutation_safety(&node.path) {
+            return Err(format!("Cannot sync '{}': {}", node.name, e));
+        }
     }
 
     let plan = exec::ExecutionPlan { nodes: sync_nodes };

@@ -52,6 +52,7 @@ pub struct IntegrationCheck {
 pub struct IntegrationReport {
     pub all_passed: bool,
     pub checks: Vec<IntegrationCheck>,
+    pub repo_statuses: Option<Vec<RepoStatus>>,
 }
 
 pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, String> {
@@ -158,7 +159,57 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
         },
     });
 
+    // 7. Per-repo git health: detached HEAD, dirty state, ahead/behind
+    let repo_statuses = collect_all(cfg).ok();
+    if let Some(ref statuses) = repo_statuses {
+        for rs in statuses {
+            let is_detached = rs.branch == "HEAD";
+            let mut detail_parts = Vec::new();
+            detail_parts.push(format!("branch: {}", rs.branch));
+            if rs.is_dirty {
+                detail_parts.push("dirty".to_string());
+            }
+            if let Some(ahead) = rs.ahead {
+                if ahead > 0 {
+                    detail_parts.push(format!("ahead: {}", ahead));
+                }
+            }
+            if let Some(behind) = rs.behind {
+                if behind > 0 {
+                    detail_parts.push(format!("behind: {}", behind));
+                }
+            }
+            let passed = !is_detached;
+            let detail = detail_parts.join(", ");
+            checks.push(IntegrationCheck {
+                name: format!("repos.{}.git_health", rs.name),
+                passed,
+                detail: if is_detached {
+                    format!("DETACHED HEAD: {}", detail)
+                } else {
+                    format!("OK: {}", detail)
+                },
+            });
+        }
+
+        // 8. Summary: all repos on valid branch
+        let all_healthy = statuses.iter().all(|rs| rs.branch != "HEAD");
+        checks.push(IntegrationCheck {
+            name: "repos.all_healthy".to_string(),
+            passed: all_healthy,
+            detail: if all_healthy {
+                "All repos on valid branches".to_string()
+            } else {
+                let detached: Vec<&str> = statuses.iter()
+                    .filter(|rs| rs.branch == "HEAD")
+                    .map(|rs| rs.name.as_str())
+                    .collect();
+                format!("Detached HEAD repos: {}", detached.join(", "))
+            },
+        });
+    }
+
     let all_passed = checks.iter().all(|c| c.passed);
 
-    Ok(IntegrationReport { all_passed, checks })
+    Ok(IntegrationReport { all_passed, checks, repo_statuses })
 }

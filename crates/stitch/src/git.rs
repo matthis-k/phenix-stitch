@@ -458,6 +458,30 @@ pub fn git_remote(repo: &Path, name: &str) -> Result<String, String> {
     GitRepo::open(repo)?.remote_url(name)
 }
 
+/// Check if the repo can safely accept mutations (commit/push).
+/// Returns Ok(()) if safe, or Err with a description of the problem.
+pub fn check_mutation_safety(path: &Path) -> Result<(), String> {
+    let repo = GitRepo::open(path)?;
+
+    // Check for merge conflicts
+    if repo.has_merge_conflicts()? {
+        return Err("Repository has merge conflicts".to_string());
+    }
+
+    // Check for mid-merge state
+    if repo.is_mid_merge()? {
+        return Err("Repository is in the middle of a merge".to_string());
+    }
+
+    // Check for detached HEAD
+    let branch = repo.branch()?;
+    if branch == "HEAD" {
+        return Err("Repository is on detached HEAD".to_string());
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
