@@ -291,7 +291,20 @@ pub fn plan_commit(
             String::new()
         };
 
-        let validation_commands: Vec<Vec<String>> = Vec::new();
+        let validation_commands: Vec<Vec<String>> = if is_dirty || needs_input_sync {
+            vec![
+                vec![
+                    "tend".to_string(),
+                    "check".to_string(),
+                    "--profile".to_string(),
+                    "pre-push".to_string(),
+                    "--offline".to_string(),
+                    "--locked".to_string(),
+                ],
+            ]
+        } else {
+            Vec::new()
+        };
 
         plan_nodes.insert(
             node_id.clone(),

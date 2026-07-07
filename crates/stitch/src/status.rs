@@ -40,3 +40,125 @@ pub fn collect_all(cfg: &WorkspaceConfig) -> Result<Vec<RepoStatus>, String> {
     }
     Ok(statuses)
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IntegrationCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IntegrationReport {
+    pub all_passed: bool,
+    pub checks: Vec<IntegrationCheck>,
+}
+
+pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, String> {
+    use std::path::Path;
+
+    let root = cfg.config_dir.as_deref().unwrap_or(Path::new("."));
+    let mut checks = Vec::new();
+
+    // 1. Check .tend.json exists
+    let tend_json = root.join(".tend.json");
+    checks.push(IntegrationCheck {
+        name: "tend.config".to_string(),
+        passed: tend_json.exists(),
+        detail: if tend_json.exists() {
+            format!("Found: {}", tend_json.display())
+        } else {
+            format!("Missing: {}", tend_json.display())
+        },
+    });
+
+    // 2. Check tend binary is locatable
+    let tend_available = std::process::Command::new("tend")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    checks.push(IntegrationCheck {
+        name: "tend.binary".to_string(),
+        passed: tend_available,
+        detail: if tend_available {
+            "tend found on PATH".to_string()
+        } else {
+            "tend not found on PATH (may be available via nix run)".to_string()
+        },
+    });
+
+    // 3. Check .stitch.json exists and parses
+    let stitch_json = root.join(".stitch.json");
+    checks.push(IntegrationCheck {
+        name: "stitch.config".to_string(),
+        passed: stitch_json.exists(),
+        detail: if stitch_json.exists() {
+            format!("Found: {}", stitch_json.display())
+        } else {
+            format!("Missing: {}", stitch_json.display())
+        },
+    });
+
+    // 4. Check .stitch/topology.json exists and is valid
+    let topo_path = root.join(".stitch").join("topology.json");
+    let topo_valid = if topo_path.exists() {
+        match std::fs::read_to_string(&topo_path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(val) => val.get("repos").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty()),
+                Err(e) => false,
+            },
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+    checks.push(IntegrationCheck {
+        name: "stitch.topology".to_string(),
+        passed: topo_valid,
+        detail: if topo_path.exists() {
+            "Topology file found and parseable".to_string()
+        } else {
+            format!("Missing: {}", topo_path.display())
+        },
+    });
+
+    // 5. Check all configured repos exist
+    let mut repos_ok = 0u32;
+    let mut repos_missing = 0u32;
+    let mut repo_details = Vec::new();
+    for repo in &cfg.repos {
+        let path = repo.resolved_path(cfg);
+        if path.exists() {
+            repos_ok += 1;
+            repo_details.push(format!("  ✓ {}", repo.name));
+        } else {
+            repos_missing += 1;
+            repo_details.push(format!("  ✗ {} (missing: {})", repo.name, path.display()));
+        }
+    }
+    checks.push(IntegrationCheck {
+        name: "repos.present".to_string(),
+        passed: repos_missing == 0,
+        detail: if repos_missing == 0 {
+            format!("All {} repo(s) present", repos_ok)
+        } else {
+            format!("{} present, {} missing:\n{}", repos_ok, repos_missing, repo_details.join("\n"))
+        },
+    });
+
+    // 6. Try loading the canonical graph (tests topology + consistency)
+    let graph_ok = crate::exec::load_canonical_graph(cfg);
+    checks.push(IntegrationCheck {
+        name: "stitch.dag".to_string(),
+        passed: graph_ok.is_ok(),
+        detail: match graph_ok {
+            Ok(_) => "Stitch DAG loaded successfully".to_string(),
+            Err(e) => format!("Stitch DAG failed: {}", e),
+        },
+    });
+
+    let all_passed = checks.iter().all(|c| c.passed);
+
+    Ok(IntegrationReport { all_passed, checks })
+}

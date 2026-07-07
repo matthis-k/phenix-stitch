@@ -9,6 +9,7 @@ use stitch::config;
 use stitch::exec;
 use stitch::git;
 use stitch::recipe;
+use stitch::status;
 use stitch::sync;
 use stitch::workloop;
 
@@ -22,7 +23,8 @@ fn main() {
             short,
             dirty_only,
             repo,
-        } => cmd_status(*json, *short, *dirty_only, repo.as_deref()),
+            integration,
+        } => cmd_status(*json, *short, *dirty_only, repo.as_deref(), *integration),
         Commands::Diff { repo, staged, json } => cmd_diff(repo.as_deref(), *staged, *json),
         Commands::Dag { mode, split, json } => cmd_dag(mode.as_deref(), split.as_deref(), *json),
         Commands::Commit {
@@ -58,6 +60,7 @@ fn main() {
             no_push,
             repos,
             run_tend,
+            no_verify,
         } => cmd_sync(
             mode.as_deref(),
             *apply,
@@ -66,6 +69,7 @@ fn main() {
             *no_push,
             repos,
             *run_tend,
+            *no_verify,
         ),
         Commands::Graph { command } => cmd_graph(command),
         Commands::Topology { command } => cmd_topology(command),
@@ -1047,6 +1051,8 @@ enum Commands {
         dirty_only: bool,
         #[arg(long, help = "Filter by repo name")]
         repo: Option<String>,
+        #[arg(long, help = "Show integration status (Tend/Stitch config health)")]
+        integration: bool,
     },
     /// Show diffs across repos
     Diff {
@@ -1118,6 +1124,8 @@ enum Commands {
         repos: Vec<String>,
         #[arg(long, help = "Run tend checks before sync")]
         run_tend: bool,
+        #[arg(long, help = "Skip pre-sync verification")]
+        no_verify: bool,
     },
     /// Graph operations: derive, verify, order, print
     Graph {
@@ -1504,8 +1512,34 @@ fn cmd_status(
     short: bool,
     dirty_only: bool,
     repo_filter: Option<&str>,
+    integration: bool,
 ) -> Result<(), String> {
     let cfg = config::find_and_load()?;
+
+    if integration {
+        let report = status::check_integration(&cfg)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&report).map_err(|e| format!("JSON: {e}"))?);
+        } else {
+            println!("Integration status:");
+            println!();
+            for c in &report.checks {
+                let icon = if c.passed { "\u{2713}" } else { "\u{2717}" };
+                println!("  {}  {}", icon, c.name);
+                for line in c.detail.lines() {
+                    println!("       {}", line);
+                }
+                println!();
+            }
+            if report.all_passed {
+                println!("All checks passed.");
+            } else {
+                println!("Some checks failed. Use --json for machine-readable output.");
+                return Err("Integration check failed".to_string());
+            }
+        }
+        return Ok(());
+    }
 
     let explicit_nodes: Vec<String> = repo_filter.map(|r| vec![r.to_string()]).unwrap_or_default();
     let selection = if repo_filter.is_some() {
@@ -2167,6 +2201,7 @@ fn cmd_sync(
     no_push: bool,
     repos: &[String],
     run_tend: bool,
+    no_verify: bool,
 ) -> Result<(), String> {
     let mode = mode.unwrap_or("push");
     let (update_inputs, push_outputs) = match mode {
@@ -2238,8 +2273,8 @@ fn cmd_sync(
             });
         }
 
-        // Run tend checks
-        if run_tend {
+        // Run tend checks (unless --no-verify)
+        if run_tend && !no_verify {
             steps.push(exec::ExecutionStep {
                 id: "tend-check".to_string(),
                 mode: exec::ExecutionMode::ReadOnly,
