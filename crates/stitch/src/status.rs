@@ -106,7 +106,10 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
     let topo_valid = if topo_path.exists() {
         match std::fs::read_to_string(&topo_path) {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(val) => val.get("repos").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty()),
+                Ok(val) => val
+                    .get("repos")
+                    .and_then(|v| v.as_array())
+                    .map_or(false, |a| !a.is_empty()),
                 Err(e) => false,
             },
             Err(_) => false,
@@ -144,7 +147,12 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
         detail: if repos_missing == 0 {
             format!("All {} repo(s) present", repos_ok)
         } else {
-            format!("{} present, {} missing:\n{}", repos_ok, repos_missing, repo_details.join("\n"))
+            format!(
+                "{} present, {} missing:\n{}",
+                repos_ok,
+                repos_missing,
+                repo_details.join("\n")
+            )
         },
     });
 
@@ -200,7 +208,8 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
             detail: if all_healthy {
                 "All repos on valid branches".to_string()
             } else {
-                let detached: Vec<&str> = statuses.iter()
+                let detached: Vec<&str> = statuses
+                    .iter()
                     .filter(|rs| rs.branch == "HEAD")
                     .map(|rs| rs.name.as_str())
                     .collect();
@@ -211,5 +220,9 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
 
     let all_passed = checks.iter().all(|c| c.passed);
 
-    Ok(IntegrationReport { all_passed, checks, repo_statuses })
+    Ok(IntegrationReport {
+        all_passed,
+        checks,
+        repo_statuses,
+    })
 }

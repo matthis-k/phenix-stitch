@@ -292,16 +292,14 @@ pub fn plan_commit(
         };
 
         let validation_commands: Vec<Vec<String>> = if is_dirty || needs_input_sync {
-            vec![
-                vec![
-                    "tend".to_string(),
-                    "check".to_string(),
-                    "--profile".to_string(),
-                    "pre-push".to_string(),
-                    "--offline".to_string(),
-                    "--locked".to_string(),
-                ],
-            ]
+            vec![vec![
+                "tend".to_string(),
+                "check".to_string(),
+                "--profile".to_string(),
+                "pre-push".to_string(),
+                "--offline".to_string(),
+                "--locked".to_string(),
+            ]]
         } else {
             Vec::new()
         };

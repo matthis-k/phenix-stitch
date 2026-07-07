@@ -286,7 +286,9 @@ fn config_order(cfg: &WorkspaceConfig) -> Vec<String> {
     cfg.repos.iter().map(|r| r.name.clone()).collect()
 }
 
-pub(crate) fn load_canonical_graph(cfg: &WorkspaceConfig) -> Result<graph::CanonicalWorkspaceGraph, String> {
+pub(crate) fn load_canonical_graph(
+    cfg: &WorkspaceConfig,
+) -> Result<graph::CanonicalWorkspaceGraph, String> {
     let order = config_order(cfg);
     let root = cfg.config_dir.as_deref().ok_or_else(|| {
         "Cannot derive Stitch DAG: workspace config directory is unavailable".to_string()

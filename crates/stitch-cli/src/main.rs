@@ -1527,7 +1527,10 @@ fn cmd_status(
     if integration {
         let report = status::check_integration(&cfg)?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&report).map_err(|e| format!("JSON: {e}"))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|e| format!("JSON: {e}"))?
+            );
         } else {
             println!("Integration status:");
             println!();
@@ -1869,10 +1872,14 @@ fn cmd_push(dry_run: bool, json_output: bool) -> Result<(), String> {
     for (node, _) in &to_push {
         if let Err(e) = git::check_mutation_safety(&node.path) {
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "error": format!("Cannot push '{}': {}", node.name, e),
-                    "pushed": []
-                })).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "error": format!("Cannot push '{}': {}", node.name, e),
+                        "pushed": []
+                    }))
+                    .unwrap()
+                );
             } else {
                 eprintln!("Cannot push '{}': {}", node.name, e);
             }
