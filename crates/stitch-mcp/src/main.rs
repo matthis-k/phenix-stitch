@@ -40,6 +40,10 @@ fn main() {
     server.add_tool(Box::new(tools::StitchStatusTool));
     server.add_tool(Box::new(tools::StitchDiffTool));
     server.add_tool(Box::new(tools::StitchDagTool));
+    server.add_tool(Box::new(tools::StitchWorkspaceDiscoverTool));
+    server.add_tool(Box::new(tools::StitchWorkspaceDagPlanTool));
+    server.add_tool(Box::new(tools::StitchWorkspaceVerifyPlanTool));
+    server.add_tool(Box::new(tools::StitchWorkspaceLockStatusTool));
     server.add_tool(Box::new(tools::StitchCommitTemplateTool));
     server.add_tool(Box::new(tools::StitchCommitTool));
     server.add_tool(Box::new(tools::StitchSyncTool));

@@ -9,6 +9,7 @@ pub mod status;
 pub mod sync;
 pub mod validate;
 pub mod workloop;
+pub mod workspace;
 
 pub use exec::{
     build_plan, build_scope, parse_closure_mode, parse_execution_mode, parse_order_mode,

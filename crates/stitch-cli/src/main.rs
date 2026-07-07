@@ -73,6 +73,7 @@ fn main() {
         ),
         Commands::Graph { command } => cmd_graph(command),
         Commands::Topology { command } => cmd_topology(command),
+        Commands::Workspace { command } => cmd_workspace(command),
         Commands::Hooks { command } => cmd_hooks(command),
         Commands::Exec {
             all: all_flag,
@@ -134,6 +135,31 @@ fn main() {
     if let Err(e) = result {
         eprintln!("error: {}", e);
         std::process::exit(1);
+    }
+}
+
+fn cmd_workspace(command: &WorkspaceCommand) -> Result<(), String> {
+    match command {
+        WorkspaceCommand::StatePath { workspace } => {
+            println!("{}", stitch::workspace::state_file(workspace).display());
+            Ok(())
+        }
+        WorkspaceCommand::Discover { workspace, json } => {
+            let root = Path::new(workspace);
+            let cfg = stitch::workspace::load_workspace_config(root)?;
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?
+                );
+            } else {
+                println!("workspace: {}", cfg.workspace);
+                for repo in cfg.repos {
+                    println!("{}\t{}", repo.name, repo.path);
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -711,7 +737,7 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
         LoopCliCommand::Detect { repo, json } => {
             let path = repo
                 .as_ref()
-                .map(|s| std::path::Path::new(s))
+                .map(std::path::Path::new)
                 .unwrap_or_else(|| std::path::Path::new("."));
             let backend = workloop::detect_backend(path)?;
             let detection = backend.detect(path)?;
@@ -753,7 +779,7 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
                 println!("State:   {:?}", wallet.state);
                 println!("Repos:   {}", wallet.repos.len());
                 let ts = serde_json::to_value(&wallet.created_at)
-                    .and_then(|v| Ok(v.as_str().unwrap_or("?").to_string()))
+                    .map(|v| v.as_str().unwrap_or("?").to_string())
                     .unwrap_or_else(|_| "?".to_string());
                 println!("Created: {}", ts);
                 println!();
@@ -1143,6 +1169,11 @@ enum Commands {
         #[command(subcommand)]
         command: TopologyCommand,
     },
+    /// Workspace state and discovery operations
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
     /// Run arbitrary commands over selected DAG scopes
     Exec {
         #[arg(long, help = "Select all nodes")]
@@ -1227,6 +1258,22 @@ enum Commands {
     Loop {
         #[command(subcommand)]
         command: LoopCliCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCommand {
+    /// Print the XDG state file used for local repo mappings
+    StatePath {
+        #[arg(long, default_value = "phenix", help = "Workspace name")]
+        workspace: String,
+    },
+    /// Discover repos from flake.lock and optional XDG local mapping
+    Discover {
+        #[arg(long, default_value = ".", help = "Root workspace path")]
+        workspace: String,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
     },
 }
 

@@ -164,6 +164,7 @@ mod tests {
             repos: vec![RepoConfig {
                 name: "test-repo".to_string(),
                 path: path_str.clone(),
+                remote: None,
             }],
             config_dir: None,
         };
@@ -200,6 +201,7 @@ mod tests {
             repos: vec![RepoConfig {
                 name: "ghost-repo".to_string(),
                 path: "/tmp/__stitch_test_ghost__".to_string(),
+                remote: None,
             }],
             config_dir: None,
         };

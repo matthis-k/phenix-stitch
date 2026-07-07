@@ -24,7 +24,8 @@ pub fn discover_inventory(
 ) -> Result<WorkspaceDiscovery, String> {
     let mut nodes = BTreeMap::new();
 
-    // Parse .gitmodules
+    // Parse .gitmodules for legacy workspaces. Modern Phenix workspaces derive
+    // inventory from locked remote flake inputs plus optional local XDG mapping.
     let gitmodules_path = root.join(".gitmodules");
     if gitmodules_path.exists() {
         let content = std::fs::read_to_string(&gitmodules_path)
@@ -44,6 +45,10 @@ pub fn discover_inventory(
                 },
             );
         }
+    }
+
+    if nodes.is_empty() {
+        apply_locked_inputs(&mut nodes, root)?;
     }
 
     // Read metadata file for classification
@@ -86,6 +91,77 @@ pub fn discover_inventory(
         nodes,
         metadata_path: metadata_path.map(|p| p.to_path_buf()),
     })
+}
+
+fn apply_locked_inputs(
+    nodes: &mut BTreeMap<String, WorkspaceNode>,
+    root: &Path,
+) -> Result<(), String> {
+    let lock_path = root.join("flake.lock");
+    if !lock_path.exists() {
+        return Ok(());
+    }
+    let lock = crate::graph::lock::parse_flake_lock(&lock_path)?;
+    let root_lock_node = lock.root.as_deref().unwrap_or("root");
+    let Some(inputs) = lock
+        .nodes
+        .get(root_lock_node)
+        .and_then(|node| node.inputs.as_ref())
+    else {
+        return Ok(());
+    };
+    for (input_name, input_value) in inputs {
+        let Some(target) = crate::graph::lock::input_target_name(input_value) else {
+            continue;
+        };
+        let Some(lock_node) = lock.nodes.get(&target) else {
+            continue;
+        };
+        let Some(locked) = &lock_node.locked else {
+            continue;
+        };
+        if locked.kind.as_deref() != Some("github") {
+            continue;
+        }
+        let Some(owner) = locked.owner.as_deref() else {
+            continue;
+        };
+        let Some(repo) = locked.repo.as_deref() else {
+            continue;
+        };
+        if owner != "matthis-k" || !repo.starts_with("phenix-") {
+            continue;
+        }
+        nodes.insert(
+            input_name.clone(),
+            WorkspaceNode {
+                id: input_name.clone(),
+                path: discover_locked_repo_path(root, repo),
+                repo_url: Some(format!("github:{owner}/{repo}")),
+                kind: NodeKind::Unknown,
+                role: RepoRole::Unknown,
+                layer: None,
+                is_root: false,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn discover_locked_repo_path(root: &Path, repo: &str) -> PathBuf {
+    for candidate in [
+        root.join("repos").join(repo),
+        root.join("flakes/00-pins").join(repo),
+        root.join("flakes/02-producers").join(repo),
+        root.join("flakes/03-integrations").join(repo),
+        root.join("flakes/04-pkgs").join(repo),
+        root.join("flakes/05-consumers").join(repo),
+    ] {
+        if candidate.join("flake.nix").exists() || candidate.join(".git").exists() {
+            return candidate;
+        }
+    }
+    root.join("repos").join(repo)
 }
 
 #[derive(Debug)]

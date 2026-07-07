@@ -175,10 +175,7 @@ impl CompositeDagGenerationStrategy {
     }
 
     pub fn default_workspace() -> Self {
-        Self::new(vec![
-            Box::new(FlakeLocksStrategy),
-            Box::new(GitSubmodulesStrategy),
-        ])
+        Self::new(vec![Box::new(FlakeLocksStrategy)])
     }
 }
 

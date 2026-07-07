@@ -54,39 +54,12 @@ fn collect_status_json(
     cfg: &stitch::model::WorkspaceConfig,
     repo_filter: &[String],
 ) -> Result<Vec<Value>, String> {
-    let selection = if repo_filter.is_empty() {
-        exec::SelectionMode::All
-    } else {
-        exec::SelectionMode::Explicit
-    };
-    let step = exec::ExecutionStep {
-        id: "collect-status".to_string(),
-        mode: exec::ExecutionMode::ReadOnly,
-        kind: exec::StepKind::Builtin {
-            name: "git.collect-status".to_string(),
-            args: serde_json::Value::Null,
-        },
-        condition: None,
-    };
-    let report = run_exec_plan(
-        cfg,
-        selection,
-        repo_filter.to_vec(),
-        exec::ClosureMode::SelfOnly,
-        exec::OrderMode::Stable,
-        step,
-    )?;
-    let mut statuses = Vec::new();
-    for nr in &report.node_results {
-        for sr in &nr.step_results {
-            if sr.success && !sr.stdout.is_empty() {
-                if let Ok(val) = serde_json::from_str::<Value>(&sr.stdout) {
-                    statuses.push(val);
-                }
-            }
-        }
-    }
-    Ok(statuses)
+    let all = stitch::status::collect_all(cfg)?;
+    Ok(all
+        .into_iter()
+        .filter(|status| repo_filter.is_empty() || repo_filter.contains(&status.name))
+        .map(|status| serde_json::to_value(status).unwrap_or_default())
+        .collect())
 }
 
 pub struct StitchStatusTool;
@@ -434,6 +407,275 @@ impl McpTool for StitchDagTool {
 }
 
 pub struct StitchCommitTemplateTool;
+
+pub struct StitchWorkspaceDiscoverTool;
+
+impl McpTool for StitchWorkspaceDiscoverTool {
+    fn name(&self) -> &str {
+        "stitch.workspace_discover"
+    }
+    fn description(&self) -> &str {
+        "Discover workspace repos from locked flake inputs and XDG local mappings"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "workspace": { "type": "string", "description": "Root workspace path (default: current directory)" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let workspace = input
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let root = std::path::Path::new(workspace);
+        let cfg = stitch::workspace::load_workspace_config(root).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("Workspace discovery failed: {e}"),
+                &audit_id,
+            )
+        })?;
+        let repos = cfg
+            .repos
+            .iter()
+            .map(|repo| {
+                json!({
+                    "name": repo.name,
+                    "path": repo.path,
+                    "remote": repo.remote,
+                    "resolved_path": repo.resolved_path(&cfg),
+                    "present": repo.resolved_path(&cfg).exists()
+                })
+            })
+            .collect::<Vec<_>>();
+        let result = ToolResult::ok(
+            json!({
+                "workspace": cfg.workspace,
+                "version": cfg.version,
+                "state_file": stitch::workspace::state_file(&cfg.workspace),
+                "repos": repos,
+                "total": repos.len()
+            }),
+            format!("Discovered {} workspace repo(s)", repos.len()),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+pub struct StitchWorkspaceDagPlanTool;
+
+impl McpTool for StitchWorkspaceDagPlanTool {
+    fn name(&self) -> &str {
+        "stitch.workspace_dag_plan"
+    }
+    fn description(&self) -> &str {
+        "Render a workspace-aware operation DAG plan using core Stitch semantics"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "mode": { "type": "string", "enum": ["commit", "sync", "full"] },
+            "repos": { "type": "array", "items": {"type": "string"} },
+            "staged": { "type": "boolean" },
+            "split": { "type": "string", "enum": ["by-repo", "by-path", "manual"] },
+            "run_tend": { "type": "boolean" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let mode = input
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("commit");
+        let split = input
+            .get("split")
+            .and_then(|v| v.as_str())
+            .unwrap_or("by-repo");
+        let staged = input
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let run_tend = input
+            .get("run_tend")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let repo_filter: Vec<String> = input
+            .get("repos")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let cfg = stitch::config::find_and_load()
+            .map_err(|e| mk_err(ErrorKind::NotFound, &format!("Config: {e}"), &audit_id))?;
+        let dag = stitch::graph::render::operation_dag_json(
+            &cfg,
+            mode,
+            split,
+            staged,
+            run_tend,
+            &repo_filter,
+        )
+        .map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("DAG rendering failed: {e}"),
+                &audit_id,
+            )
+        })?;
+        let total = dag.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+        let result = ToolResult::ok(
+            dag,
+            format!("Workspace DAG plan: {} node(s) in {} mode", total, mode),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+pub struct StitchWorkspaceVerifyPlanTool;
+
+impl McpTool for StitchWorkspaceVerifyPlanTool {
+    fn name(&self) -> &str {
+        "stitch.workspace_verify_plan"
+    }
+    fn description(&self) -> &str {
+        "Validate the lock-derived workspace graph and return a structured read-only report"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "workspace": { "type": "string", "description": "Root workspace path (default: current directory)" },
+            "strict": { "type": "boolean" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let workspace = input
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let strict = input
+            .get("strict")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let graph =
+            stitch::graph::derive::derive_graph_from_locks(std::path::Path::new(workspace), None)
+                .map_err(|e| {
+                mk_err(
+                    ErrorKind::Internal,
+                    &format!("Graph derivation failed: {e}"),
+                    &audit_id,
+                )
+            })?;
+        let report = stitch::graph::validate::validate_graph(
+            &graph,
+            &stitch::graph::ValidateOptions { strict },
+        );
+        let result = ToolResult::ok(
+            json!({
+                "valid": report.valid,
+                "node_count": report.node_count,
+                "edge_count": report.edge_count,
+                "diagnostics": report.diagnostics,
+                "strict": strict
+            }),
+            format!(
+                "Workspace graph {}: {} node(s), {} edge(s)",
+                if report.valid { "valid" } else { "invalid" },
+                report.node_count,
+                report.edge_count
+            ),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
+
+pub struct StitchWorkspaceLockStatusTool;
+
+impl McpTool for StitchWorkspaceLockStatusTool {
+    fn name(&self) -> &str {
+        "stitch.workspace_lock_status"
+    }
+    fn description(&self) -> &str {
+        "Summarize root flake.lock inputs used as locked workspace authority"
+    }
+    fn metadata(&self) -> ToolMetadata {
+        tool_meta(MutationLevel::ReadOnly)
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "workspace": { "type": "string", "description": "Root workspace path (default: current directory)" }
+        })
+    }
+    fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+        let audit_id = ctx.audit.generate_id();
+        let workspace = input
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let lock_path = std::path::Path::new(workspace).join("flake.lock");
+        let lock = stitch::graph::parse_flake_lock(&lock_path).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("Lock parse failed: {e}"),
+                &audit_id,
+            )
+        })?;
+        let root_name = lock.root.as_deref().unwrap_or("root");
+        let inputs = lock
+            .nodes
+            .get(root_name)
+            .and_then(|node| node.inputs.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        let input_status = inputs
+            .iter()
+            .filter_map(|(input_name, input_value)| {
+                let target = stitch::graph::lock::input_target_name(input_value)?;
+                let node = lock.nodes.get(&target)?;
+                let locked = node.locked.as_ref()?;
+                Some(json!({
+                    "input": input_name,
+                    "target": target,
+                    "type": locked.kind,
+                    "owner": locked.owner,
+                    "repo": locked.repo,
+                    "rev": locked.rev,
+                    "url": locked.url,
+                    "path": locked.path,
+                    "is_phenix_repo": locked.kind.as_deref() == Some("github")
+                        && locked.owner.as_deref() == Some("matthis-k")
+                        && locked.repo.as_deref().is_some_and(|repo| repo.starts_with("phenix-"))
+                }))
+            })
+            .collect::<Vec<_>>();
+        let result = ToolResult::ok(
+            json!({
+                "lock_file": lock_path,
+                "root": root_name,
+                "inputs": input_status,
+                "total": input_status.len()
+            }),
+            format!("{} locked root input(s)", input_status.len()),
+            &audit_id,
+        );
+        Ok(serde_json::to_value(&result).unwrap_or_default())
+    }
+}
 
 impl McpTool for StitchCommitTemplateTool {
     fn name(&self) -> &str {
@@ -1680,7 +1922,9 @@ impl McpTool for StitchLoopPublishTool {
                     bookmark: r.main_bookmark.clone(),
                 })
                 .collect(),
+            #[allow(deprecated)]
             repos: Vec::new(),
+            #[allow(deprecated)]
             main_bookmarks: Vec::new(),
         };
 

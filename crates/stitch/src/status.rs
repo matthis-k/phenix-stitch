@@ -1,4 +1,5 @@
 use crate::git;
+use crate::graph;
 use crate::model::{RepoAvailability, RepoStatus, WorkspaceConfig};
 
 pub fn collect_all(cfg: &WorkspaceConfig) -> Result<Vec<RepoStatus>, String> {
@@ -89,41 +90,34 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
         },
     });
 
-    // 3. Check .stitch.json exists and parses
-    let stitch_json = root.join(".stitch.json");
+    // 3. Check the root lock file exists as the workspace source of truth
+    let lock_file = root.join("flake.lock");
     checks.push(IntegrationCheck {
-        name: "stitch.config".to_string(),
-        passed: stitch_json.exists(),
-        detail: if stitch_json.exists() {
-            format!("Found: {}", stitch_json.display())
+        name: "stitch.locked-workspace".to_string(),
+        passed: lock_file.exists(),
+        detail: if lock_file.exists() {
+            format!("Found: {}", lock_file.display())
         } else {
-            format!("Missing: {}", stitch_json.display())
+            format!("Missing: {}", lock_file.display())
         },
     });
 
-    // 4. Check .stitch/topology.json exists and is valid
-    let topo_path = root.join(".stitch").join("topology.json");
-    let topo_valid = if topo_path.exists() {
-        match std::fs::read_to_string(&topo_path) {
-            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(val) => val
-                    .get("repos")
-                    .and_then(|v| v.as_array())
-                    .map_or(false, |a| !a.is_empty()),
-                Err(e) => false,
-            },
-            Err(_) => false,
-        }
-    } else {
-        false
-    };
+    // 4. Check Stitch can derive and validate a DAG from flake locks only.
+    let graph_report = graph::derive::derive_graph_from_locks(root, None).map(|dag| {
+        graph::validate::validate_graph(&dag, &graph::validate::ValidateOptions { strict: true })
+    });
     checks.push(IntegrationCheck {
-        name: "stitch.topology".to_string(),
-        passed: topo_valid,
-        detail: if topo_path.exists() {
-            "Topology file found and parseable".to_string()
-        } else {
-            format!("Missing: {}", topo_path.display())
+        name: "stitch.locked-graph".to_string(),
+        passed: graph_report.as_ref().is_ok_and(|report| report.valid),
+        detail: match graph_report {
+            Ok(report) => format!(
+                "locked graph valid={}, nodes={}, edges={}, diagnostics={}",
+                report.valid,
+                report.node_count,
+                report.edge_count,
+                report.diagnostics.len()
+            ),
+            Err(err) => format!("Failed to derive locked graph: {err}"),
         },
     });
 
@@ -156,13 +150,18 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
         },
     });
 
-    // 6. Try loading the canonical graph (tests topology + consistency)
-    let graph_ok = crate::exec::load_canonical_graph(cfg);
+    // 6. Confirm the lock-derived Stitch DAG is usable without committed topology.
+    let graph_ok = graph::derive::derive_graph_from_locks(root, None).map(|dag| {
+        graph::validate::validate_graph(&dag, &graph::validate::ValidateOptions { strict: true })
+    });
     checks.push(IntegrationCheck {
         name: "stitch.dag".to_string(),
-        passed: graph_ok.is_ok(),
+        passed: graph_ok.as_ref().is_ok_and(|report| report.valid),
         detail: match graph_ok {
-            Ok(_) => "Stitch DAG loaded successfully".to_string(),
+            Ok(report) => format!(
+                "Lock-derived Stitch DAG valid={}, nodes={}, edges={}",
+                report.valid, report.node_count, report.edge_count
+            ),
             Err(e) => format!("Stitch DAG failed: {}", e),
         },
     });

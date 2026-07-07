@@ -428,7 +428,7 @@ impl Timestamp {
         let mut rem = if remaining < 0 { 0 } else { remaining as u64 };
         let month_days = [
             31,
-            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
                 29
             } else {
                 28
@@ -550,8 +550,10 @@ pub struct PublishTarget {
 /// Refs to publish.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishRefs {
+    #[serde(default)]
     #[deprecated(note = "use targets field instead")]
     pub repos: Vec<String>,
+    #[serde(default)]
     #[deprecated(note = "use targets field instead")]
     pub main_bookmarks: Vec<String>,
     #[serde(default)]
@@ -734,7 +736,7 @@ impl LoopBackend for JjBackend {
                 r#"change_id.shortest(12) ++ " " ++ commit_id.shortest(12)"#,
             ],
         )?;
-        let parts: Vec<&str> = log.trim().split_whitespace().collect();
+        let parts: Vec<&str> = log.split_whitespace().collect();
         let change_id = parts.first().unwrap_or(&"?").to_string();
         let commit_id = parts.get(1).unwrap_or(&"?").to_string();
 
@@ -1078,14 +1080,6 @@ impl LoopBackend for JjBackend {
         let mut pushed = Vec::new();
         let mut failed = Vec::new();
 
-        // Backward compat: if targets is empty but repos/main_bookmarks populated, warn and skip
-        if refs.targets.is_empty() && !refs.repos.is_empty() {
-            eprintln!(
-                "[deprecation] PublishRefs.repos and .main_bookmarks are deprecated; \
-                 use PublishRefs.targets instead"
-            );
-        }
-
         for target in &refs.targets {
             let backend = JjBackend::new();
             let det = backend.detect(&target.path)?;
@@ -1339,13 +1333,6 @@ impl LoopBackend for GitBackend {
     fn publish(&self, refs: PublishRefs) -> Result<PublishResult, String> {
         let mut pushed = Vec::new();
         let mut failed = Vec::new();
-
-        if refs.targets.is_empty() && !refs.repos.is_empty() {
-            eprintln!(
-                "[deprecation] PublishRefs.repos and .main_bookmarks are deprecated; \
-                 use PublishRefs.targets instead"
-            );
-        }
 
         for target in &refs.targets {
             match self.run_git(&target.path, &["push", "origin", &target.bookmark]) {
@@ -1843,19 +1830,18 @@ mod tests {
         std::fs::create_dir_all(&repo_path).unwrap();
         init_git_repo(&repo_path);
 
-        let refs = PublishRefs {
-            repos: vec![],
-            main_bookmarks: vec![],
-            targets: vec![PublishTarget {
-                name: "test-target".to_string(),
-                path: repo_path,
-                bookmark: "main".to_string(),
-            }],
-        };
+        let refs: PublishRefs = serde_json::from_value(serde_json::json!({
+            "targets": [{
+                "name": "test-target",
+                "path": repo_path,
+                "bookmark": "main",
+            }]
+        }))
+        .unwrap();
         let backend = GitBackend;
         let result = backend.publish(refs).unwrap();
         // No remote configured → should fail
-        assert!(result.failed.len() > 0);
+        assert!(!result.failed.is_empty());
         assert!(result.pushed.is_empty());
     }
 
@@ -2031,19 +2017,18 @@ mod tests {
         std::fs::create_dir_all(&repo_path).unwrap();
         init_jj_repo(&repo_path);
 
-        let refs = PublishRefs {
-            repos: vec![],
-            main_bookmarks: vec![],
-            targets: vec![PublishTarget {
-                name: "test-target".to_string(),
-                path: repo_path,
-                bookmark: "main".to_string(),
-            }],
-        };
+        let refs: PublishRefs = serde_json::from_value(serde_json::json!({
+            "targets": [{
+                "name": "test-target",
+                "path": repo_path,
+                "bookmark": "main",
+            }]
+        }))
+        .unwrap();
         let backend = JjBackend::new();
         let result = backend.publish(refs).unwrap();
         // JjNative repo without remote → should fail
-        assert!(result.failed.len() > 0);
+        assert!(!result.failed.is_empty());
         assert!(result.pushed.is_empty());
     }
 }

@@ -15,6 +15,8 @@ pub struct WorkspaceConfig {
 pub struct RepoConfig {
     pub name: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
 }
 
 impl RepoConfig {

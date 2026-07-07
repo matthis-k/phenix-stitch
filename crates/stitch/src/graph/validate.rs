@@ -391,10 +391,10 @@ fn url_repo_name(url: &str) -> Option<&str> {
     // SSH-style: git@github.com:org/repo
     if let Some(idx) = url.find(':') {
         let after = &url[idx + 1..];
-        return after.split('/').last();
+        return after.split('/').next_back();
     }
     // HTTPS-style or path-style
-    url.split('/').last().filter(|s| !s.is_empty())
+    url.split('/').next_back().filter(|s| !s.is_empty())
 }
 
 enum Mark {
@@ -1078,7 +1078,16 @@ mod tests {
     #[test]
     fn test_valid_workspace_full_path_layer_consistency() {
         // Full workspace where all paths and layers match
-        let node_specs: Vec<(&str, NodeKind, RepoRole, u32, &str, Option<&str>, bool)> = vec![
+        type NodeSpecTuple<'a> = (
+            &'a str,
+            NodeKind,
+            RepoRole,
+            u32,
+            &'a str,
+            Option<&'a str>,
+            bool,
+        );
+        let node_specs: Vec<NodeSpecTuple<'_>> = vec![
             (
                 "phenix-pins",
                 NodeKind::Pins,

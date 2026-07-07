@@ -350,7 +350,7 @@ pub fn install_hooks_for_repo(
     }
 
     let is_root = repo_name == "phenix";
-    let sub_path = repo_path.strip_prefix(workspace_root).unwrap_or(repo_path);
+    let _sub_path = repo_path.strip_prefix(workspace_root).unwrap_or(repo_path);
     let pre_commit_cmd = if is_root {
         "nix develop .#default --command tend check --profile git-hook --staged --affected-dag"
             .to_string()
@@ -1145,7 +1145,7 @@ fn builtin_tend_check(node: &ExecutionNode, args: &serde_json::Value) -> StepRes
     // Try flake-resolved tend first, then fallback to ambient PATH
     let tend_cmd = resolve_tend_command(&node.path);
     let output = std::process::Command::new(&tend_cmd.0)
-        .args(&tend_cmd.1.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
+        .args(tend_cmd.1.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
         .args(&cmd_args)
         .current_dir(&node.path)
         .output();
@@ -1673,18 +1673,22 @@ mod tests {
                 crate::model::RepoConfig {
                     name: "pins".to_string(),
                     path: "flakes/00-pins/pins".to_string(),
+                    remote: None,
                 },
                 crate::model::RepoConfig {
                     name: "tools".to_string(),
                     path: "flakes/02-producers/tools".to_string(),
+                    remote: None,
                 },
                 crate::model::RepoConfig {
                     name: "hosts".to_string(),
                     path: "flakes/05-consumers/hosts".to_string(),
+                    remote: None,
                 },
                 crate::model::RepoConfig {
                     name: "phenix".to_string(),
                     path: ".".to_string(),
+                    remote: None,
                 },
             ],
             config_dir: Some(root),
