@@ -32,17 +32,37 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Apply repository formatting
+        id: format
         shell: bash
         run: |
-          set -euo pipefail
-          nix develop --command cargo fmt --all
-          if ! git diff --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -- '*.rs'
-            git commit -m 'style: apply rustfmt to discovered workspace graph'
-            git push origin HEAD:refactor/discovered-workspace-graph
-          fi
+          set +e
+          (
+            set -euxo pipefail
+            nix develop --command cargo fmt --all
+            if ! git diff --quiet; then
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git add -- '*.rs'
+              git commit -m 'style: apply rustfmt to discovered workspace graph'
+              git push origin HEAD:refactor/discovered-workspace-graph
+            fi
+          ) > format.log 2>&1
+          status=$?
+          cat format.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload formatting diagnostics
+        if: steps.format.outputs.status != '0'
+        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
+        with:
+          name: stitch-format-diagnostics
+          path: format.log
+          if-no-files-found: error
+
+      - name: Stop after formatting failure
+        if: steps.format.outputs.status != '0'
+        run: exit 1
 
       - name: Run deterministic checks
         id: checks
