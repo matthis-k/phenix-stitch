@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -24,6 +24,50 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Preserve resolved workspace inventory in execution planning
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path("crates/stitch/src/exec.rs"): [
+                  (
+                      "graph::derive::derive_workspace_graph(root, metadata.as_deref())",
+                      "graph::derive::derive_workspace_graph_from_config(cfg, metadata.as_deref())",
+                  ),
+              ],
+              Path("crates/stitch/src/graph/mod.rs"): [
+                  (
+                      "pub use derive::derive_workspace_graph;",
+                      "pub use derive::{derive_workspace_graph, derive_workspace_graph_from_config};",
+                  ),
+              ],
+              Path("crates/stitch/src/lib.rs"): [
+                  (
+                      "    derive::derive_workspace_graph,",
+                      "    derive::{derive_workspace_graph, derive_workspace_graph_from_config},",
+                  ),
+              ],
+          }
+
+          for path, edits in replacements.items():
+              text = path.read_text()
+              for old, new in edits:
+                  if text.count(old) != 1:
+                      raise SystemExit(f"expected one occurrence in {path}: {old!r}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text)
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/stitch/src/exec.rs crates/stitch/src/graph/mod.rs crates/stitch/src/lib.rs
+          git commit -m 'fix(exec): preserve resolved workspace inventory'
+          git push origin HEAD:refactor/discovered-workspace-graph
 
       - name: Install Nix
         uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
