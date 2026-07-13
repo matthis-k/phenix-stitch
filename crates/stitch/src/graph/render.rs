@@ -147,8 +147,9 @@ pub fn operation_dag_json(
             .as_deref()
             .unwrap_or(std::path::Path::new("."));
         let metadata = root.join(".stitch").join("topology.json");
-        let graph = crate::graph::derive::derive_graph_from_locks(root, Some(&metadata))
-            .map_err(|e| format!("Topology evidence failed: {e}"))?;
+        let metadata = metadata.exists().then_some(metadata);
+        let graph = crate::graph::derive::derive_workspace_graph(root, metadata.as_deref())
+            .map_err(|e| format!("Workspace graph evidence failed: {e}"))?;
         let canonical =
             crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).map_err(|e| e.to_string())?;
         let stable_order = cfg.repos.iter().map(|r| r.name.clone()).collect();
@@ -163,8 +164,8 @@ pub fn operation_dag_json(
         for planned in plan.nodes {
             if let Some(node) = canonical.node(&planned.name) {
                 nodes.push(serde_json::json!({
-                    "id": format!("{}:topology", planned.name),
-                    "kind": "topology",
+                    "id": format!("{}:workspace", planned.name),
+                    "kind": "workspace",
                     "repo": planned.name,
                     "path": node.path,
                     "layer": node.layer.unwrap_or(999),
@@ -173,7 +174,7 @@ pub fn operation_dag_json(
                 }));
             }
         }
-        evidence_message = Some("No dirty repos; showing validated full topology evidence");
+        evidence_message = Some("No dirty repos; showing validated discovered-workspace graph");
     }
 
     let total = nodes.len();

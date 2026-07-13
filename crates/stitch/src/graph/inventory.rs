@@ -4,13 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::graph::{NodeKind, RepoRole, WorkspaceNode};
-
-#[derive(Debug, Clone)]
-pub struct InventoryOptions {
-    pub root: PathBuf,
-    pub include_root: bool,
-    pub metadata_file: Option<PathBuf>,
-}
+use crate::model::WorkspaceConfig;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceDiscovery {
@@ -18,243 +12,131 @@ pub struct WorkspaceDiscovery {
     pub metadata_path: Option<PathBuf>,
 }
 
+/// Discover workspace members through Stitch's workspace policy, then apply
+/// optional classification metadata. Membership is never created by metadata.
 pub fn discover_inventory(
     root: &Path,
     metadata_path: Option<&Path>,
 ) -> Result<WorkspaceDiscovery, String> {
-    let mut nodes = BTreeMap::new();
+    let cfg = crate::workspace::load_workspace_config(root)?;
+    discover_inventory_from_config(&cfg, metadata_path)
+}
 
-    // Parse .gitmodules for legacy workspaces. Modern Phenix workspaces derive
-    // inventory from locked remote flake inputs plus optional local XDG mapping.
-    let gitmodules_path = root.join(".gitmodules");
-    if gitmodules_path.exists() {
-        let content = std::fs::read_to_string(&gitmodules_path)
-            .map_err(|e| format!("Read .gitmodules: {e}"))?;
-        for entry in parse_gitmodules(&content) {
-            let id = entry.name.clone();
-            nodes.insert(
-                id.clone(),
+pub fn discover_inventory_from_config(
+    cfg: &WorkspaceConfig,
+    metadata_path: Option<&Path>,
+) -> Result<WorkspaceDiscovery, String> {
+    let root = cfg.config_dir.as_deref().ok_or_else(|| {
+        "Cannot discover workspace inventory: workspace root is unavailable".to_string()
+    })?;
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    let mut nodes = BTreeMap::new();
+    for repo in &cfg.repos {
+        let path = repo.resolved_path(cfg);
+        let canonical_path = path.canonicalize().unwrap_or(path);
+        let is_root = repo.name == cfg.workspace || canonical_path == canonical_root;
+        let (kind, role) = if is_root {
+            (NodeKind::WorkspaceRoot, RepoRole::Root)
+        } else {
+            (NodeKind::Unknown, RepoRole::Unknown)
+        };
+
+        if nodes
+            .insert(
+                repo.name.clone(),
                 WorkspaceNode {
-                    id,
-                    path: root.join(&entry.path),
-                    repo_url: Some(entry.url),
-                    kind: NodeKind::Unknown,
-                    role: RepoRole::Unknown,
+                    id: repo.name.clone(),
+                    path: canonical_path,
+                    repo_url: repo.remote.clone(),
+                    kind,
+                    role,
                     layer: None,
-                    is_root: false,
+                    is_root,
                 },
-            );
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "Workspace inventory contains duplicate repository id '{}'",
+                repo.name
+            ));
         }
     }
 
     if nodes.is_empty() {
-        apply_locked_inputs(&mut nodes, root)?;
+        return Err("Workspace discovery produced no repositories".to_string());
+    }
+    let roots = nodes.values().filter(|node| node.is_root).count();
+    if roots != 1 {
+        return Err(format!(
+            "Workspace inventory must contain exactly one root repository, found {roots}"
+        ));
     }
 
-    // Read metadata file for classification
-    if let Some(meta_path) = metadata_path {
-        let meta_full = if meta_path.is_relative() {
-            root.join(meta_path)
-        } else {
-            meta_path.to_path_buf()
-        };
-        if meta_full.exists() {
-            let content = std::fs::read_to_string(&meta_full)
-                .map_err(|e| format!("Read metadata {}: {e}", meta_full.display()))?;
-
-            // Try new topology format first (repos array), fall back to old format (nodes map)
-            if content.contains("\"repos\"") {
-                apply_topology(&mut nodes, root, &content, &meta_full)?;
-            } else {
-                apply_metadata(&mut nodes, &content, &meta_full)?;
-            }
-        }
-    }
-
-    // Add root node if not already defined by topology metadata
-    if !nodes.values().any(|n| n.is_root) {
-        nodes.insert(
-            "phenix".to_string(),
-            WorkspaceNode {
-                id: "phenix".to_string(),
-                path: root.to_path_buf(),
-                repo_url: None,
-                kind: NodeKind::WorkspaceRoot,
-                role: RepoRole::Root,
-                layer: Some(999),
-                is_root: true,
-            },
-        );
+    let metadata_path = resolve_metadata_path(root, metadata_path);
+    if let Some(path) = metadata_path.as_deref() {
+        apply_classification_metadata(&mut nodes, path)?;
     }
 
     Ok(WorkspaceDiscovery {
         nodes,
-        metadata_path: metadata_path.map(|p| p.to_path_buf()),
+        metadata_path,
     })
 }
 
-fn apply_locked_inputs(
-    nodes: &mut BTreeMap<String, WorkspaceNode>,
-    root: &Path,
-) -> Result<(), String> {
-    let lock_path = root.join("flake.lock");
-    if !lock_path.exists() {
-        return Ok(());
-    }
-    let lock = crate::graph::lock::parse_flake_lock(&lock_path)?;
-    let root_lock_node = lock.root.as_deref().unwrap_or("root");
-    let Some(inputs) = lock
-        .nodes
-        .get(root_lock_node)
-        .and_then(|node| node.inputs.as_ref())
-    else {
-        return Ok(());
+fn resolve_metadata_path(root: &Path, metadata_path: Option<&Path>) -> Option<PathBuf> {
+    let path = metadata_path?;
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
     };
-    for (input_name, input_value) in inputs {
-        let Some(target) = crate::graph::lock::input_target_name(input_value) else {
-            continue;
-        };
-        let Some(lock_node) = lock.nodes.get(&target) else {
-            continue;
-        };
-        let Some(locked) = &lock_node.locked else {
-            continue;
-        };
-        if locked.kind.as_deref() != Some("github") {
-            continue;
-        }
-        let Some(owner) = locked.owner.as_deref() else {
-            continue;
-        };
-        let Some(repo) = locked.repo.as_deref() else {
-            continue;
-        };
-        if owner != "matthis-k" || !repo.starts_with("phenix-") {
-            continue;
-        }
-        nodes.insert(
-            input_name.clone(),
-            WorkspaceNode {
-                id: input_name.clone(),
-                path: discover_locked_repo_path(root, repo),
-                repo_url: Some(format!("github:{owner}/{repo}")),
-                kind: NodeKind::Unknown,
-                role: RepoRole::Unknown,
-                layer: None,
-                is_root: false,
-            },
-        );
-    }
-    Ok(())
+    resolved.exists().then_some(resolved)
 }
 
-fn discover_locked_repo_path(root: &Path, repo: &str) -> PathBuf {
-    for candidate in [
-        root.join("repos").join(repo),
-        root.join("flakes/00-pins").join(repo),
-        root.join("flakes/02-producers").join(repo),
-        root.join("flakes/03-integrations").join(repo),
-        root.join("flakes/04-pkgs").join(repo),
-        root.join("flakes/05-consumers").join(repo),
-    ] {
-        if candidate.join("flake.nix").exists() || candidate.join(".git").exists() {
-            return candidate;
-        }
-    }
-    root.join("repos").join(repo)
-}
-
-#[derive(Debug)]
-struct GitmoduleEntry {
-    name: String,
-    path: String,
-    url: String,
-}
-
-fn parse_gitmodules(content: &str) -> Vec<GitmoduleEntry> {
-    let mut entries = Vec::new();
-    let mut current: Option<GitmoduleEntry> = None;
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') && line.ends_with(']') {
-            if let Some(entry) = current.take() {
-                entries.push(entry);
-            }
-            let inner = &line[1..line.len() - 1].trim();
-            if let Some(name) = inner.strip_prefix("submodule \"") {
-                if let Some(name) = name.strip_suffix('"') {
-                    current = Some(GitmoduleEntry {
-                        name: name.to_string(),
-                        path: String::new(),
-                        url: String::new(),
-                    });
-                }
-            }
-        } else if let Some(ref mut entry) = current {
-            if let Some((key, value)) = line.split_once('=') {
-                let key = key.trim();
-                let value = value.trim();
-                match key {
-                    "path" => entry.path = value.to_string(),
-                    "url" => entry.url = value.to_string(),
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    if let Some(entry) = current {
-        entries.push(entry);
-    }
-
-    entries
-}
-
-fn apply_topology(
+fn apply_classification_metadata(
     nodes: &mut BTreeMap<String, WorkspaceNode>,
-    root: &Path,
-    content: &str,
-    meta_path: &Path,
+    metadata_path: &Path,
 ) -> Result<(), String> {
-    let topology: TopologyFile = serde_json::from_str(content)
-        .map_err(|e| format!("Parse topology {}: {e}", meta_path.display()))?;
+    let content = std::fs::read_to_string(metadata_path)
+        .map_err(|e| format!("Read metadata {}: {e}", metadata_path.display()))?;
+    let metadata: WorkspaceMetadata = serde_json::from_str(&content)
+        .map_err(|e| format!("Parse metadata {}: {e}", metadata_path.display()))?;
 
-    for repo in topology.repos {
-        let path = if repo.path == "." {
-            root.to_path_buf()
-        } else {
-            root.join(&repo.path)
+    let mut declared_root = None;
+    for repo in metadata.repos {
+        let Some(node) = nodes.get_mut(&repo.name) else {
+            return Err(format!(
+                "Metadata {} references non-member repository '{}'",
+                metadata_path.display(),
+                repo.name
+            ));
         };
 
-        let role = repo.role;
-        let kind = role_to_kind(role);
-        let is_root = role == RepoRole::Root;
-
-        let existing = nodes.get_mut(&repo.name);
-
-        if let Some(node) = existing {
-            node.path = path;
-            node.kind = kind;
-            node.role = role;
-            node.layer = Some(repo.layer);
-            node.is_root = is_root;
-            if repo.url.is_some() {
-                node.repo_url = repo.url;
+        node.role = repo.role;
+        node.kind = role_to_kind(repo.role);
+        node.layer = Some(repo.layer);
+        if repo.role == RepoRole::Root {
+            if let Some(existing) = &declared_root {
+                return Err(format!(
+                    "Metadata {} declares multiple roots: '{}' and '{}'",
+                    metadata_path.display(),
+                    existing,
+                    repo.name
+                ));
             }
-        } else {
-            nodes.insert(
-                repo.name.clone(),
-                WorkspaceNode {
-                    id: repo.name,
-                    path,
-                    repo_url: repo.url,
-                    kind,
-                    role,
-                    layer: Some(repo.layer),
-                    is_root,
-                },
-            );
+            declared_root = Some(repo.name.clone());
+        }
+    }
+
+    if let Some(root_id) = declared_root {
+        for node in nodes.values_mut() {
+            node.is_root = node.id == root_id;
+            if node.is_root {
+                node.kind = NodeKind::WorkspaceRoot;
+                node.role = RepoRole::Root;
+            }
         }
     }
 
@@ -264,224 +146,121 @@ fn apply_topology(
 fn role_to_kind(role: RepoRole) -> NodeKind {
     match role {
         RepoRole::Pins => NodeKind::Pins,
-        RepoRole::Lib => NodeKind::Unknown,
-        RepoRole::PkgsBase => NodeKind::Unknown,
-        RepoRole::Protocols => NodeKind::Unknown,
-        RepoRole::Producer => NodeKind::ToolProvider,
-        RepoRole::Integration => NodeKind::Unknown,
         RepoRole::PkgsAggregator => NodeKind::PackageProvider,
+        RepoRole::Producer => NodeKind::ToolProvider,
         RepoRole::Consumer => NodeKind::HostConsumer,
         RepoRole::Root => NodeKind::WorkspaceRoot,
         RepoRole::External => NodeKind::External,
-        RepoRole::Unknown => NodeKind::Unknown,
+        RepoRole::Lib
+        | RepoRole::PkgsBase
+        | RepoRole::Protocols
+        | RepoRole::Integration
+        | RepoRole::Unknown => NodeKind::Unknown,
     }
 }
-
-fn apply_metadata(
-    nodes: &mut BTreeMap<String, WorkspaceNode>,
-    content: &str,
-    meta_path: &Path,
-) -> Result<(), String> {
-    let meta: MetadataFile = serde_json::from_str(content)
-        .map_err(|e| format!("Parse metadata {}: {e}", meta_path.display()))?;
-
-    for (node_id, meta_node) in &meta.nodes {
-        let kind = meta_node.kind();
-        let role = kind_to_role(kind);
-
-        if let Some(node) = nodes.get_mut(node_id) {
-            node.kind = kind;
-            node.role = role;
-            node.layer = Some(meta_node.layer);
-            if meta_node.root.unwrap_or(false) {
-                node.is_root = true;
-            }
-        } else {
-            nodes.insert(
-                node_id.clone(),
-                WorkspaceNode {
-                    id: node_id.clone(),
-                    path: PathBuf::new(),
-                    repo_url: None,
-                    kind,
-                    role,
-                    layer: Some(meta_node.layer),
-                    is_root: meta_node.root.unwrap_or(false),
-                },
-            );
-        }
-    }
-
-    Ok(())
-}
-
-fn kind_to_role(kind: NodeKind) -> RepoRole {
-    match kind {
-        NodeKind::Pins => RepoRole::Pins,
-        NodeKind::PackageProvider => RepoRole::PkgsAggregator,
-        NodeKind::ToolProvider => RepoRole::Producer,
-        NodeKind::ShellProvider => RepoRole::Producer,
-        NodeKind::DesktopProvider => RepoRole::Consumer,
-        NodeKind::HostConsumer => RepoRole::Consumer,
-        NodeKind::WorkspaceRoot => RepoRole::Root,
-        NodeKind::External => RepoRole::External,
-        NodeKind::Unknown => RepoRole::Unknown,
-    }
-}
-
-// ── New topology format (`.stitch/topology.json`) ──
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)]
-struct TopologyFile {
-    version: Option<u32>,
+struct WorkspaceMetadata {
+    version: u32,
+    #[serde(default)]
     workspace: Option<String>,
-    root: Option<String>,
-    repos: Vec<TopologyRepo>,
-    rules: Option<TopologyRules>,
+    repos: Vec<WorkspaceMetadataRepo>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TopologyRepo {
+#[serde(deny_unknown_fields)]
+struct WorkspaceMetadataRepo {
     name: String,
     role: RepoRole,
     layer: u32,
-    path: String,
-    url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct TopologyRules {
-    forbid_cycles: Option<bool>,
-    forbid_root_dependency: Option<bool>,
-    forbid_same_layer_internal_inputs: Option<bool>,
-    forbid_producer_depends_on_producer: Option<bool>,
-    forbid_producer_depends_on_pkgs_aggregator: Option<bool>,
-    require_path_layer_matches_configured_layer: Option<bool>,
-}
-
-// ── Old metadata format (`stitch.workspace.json`) ──
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct MetadataFile {
-    version: u32,
-    nodes: BTreeMap<String, MetadataNode>,
-    rules: Option<MetadataRules>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MetadataNode {
-    kind: String,
-    layer: u32,
-    root: Option<bool>,
-}
-
-impl MetadataNode {
-    fn kind(&self) -> NodeKind {
-        match self.kind.as_str() {
-            "pins" => NodeKind::Pins,
-            "packageProvider" => NodeKind::PackageProvider,
-            "toolProvider" => NodeKind::ToolProvider,
-            "shellProvider" => NodeKind::ShellProvider,
-            "desktopProvider" => NodeKind::DesktopProvider,
-            "hostConsumer" => NodeKind::HostConsumer,
-            "workspaceRoot" => NodeKind::WorkspaceRoot,
-            "external" => NodeKind::External,
-            _ => NodeKind::Unknown,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct MetadataRules {
-    #[allow(dead_code)]
-    forbid_cycles: Option<bool>,
-    #[allow(dead_code)]
-    forbid_root_provider_role: Option<bool>,
-    #[allow(dead_code)]
-    forbid_provider_depends_on_consumer: Option<bool>,
-    #[allow(dead_code)]
-    require_root_ultimate_consumer: Option<bool>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::RepoConfig;
 
-    #[test]
-    fn test_parse_gitmodules() {
-        let content = r#"
-[submodule "phenix-tools"]
-  path = flakes/02-producers/phenix-tools
-  url = git@github.com:matthis-k/phenix-tools.git
-[submodule "phenix-pins"]
-  path = flakes/00-pins/phenix-pins
-  url = git@github.com:matthis-k/phenix-pins.git
-"#;
-        let entries = parse_gitmodules(content);
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].name, "phenix-tools");
-        assert_eq!(entries[0].path, "flakes/02-producers/phenix-tools");
-        assert_eq!(entries[0].url, "git@github.com:matthis-k/phenix-tools.git");
-        assert_eq!(entries[1].name, "phenix-pins");
+    fn config(root: &Path) -> WorkspaceConfig {
+        WorkspaceConfig {
+            version: 2,
+            workspace: "workspace".to_string(),
+            repos: vec![
+                RepoConfig {
+                    name: "workspace".to_string(),
+                    path: ".".to_string(),
+                    remote: None,
+                },
+                RepoConfig {
+                    name: "phenix-stitch".to_string(),
+                    path: "repos/phenix-stitch".to_string(),
+                    remote: Some("github:matthis-k/phenix-stitch".to_string()),
+                },
+            ],
+            config_dir: Some(root.to_path_buf()),
+        }
     }
 
     #[test]
-    fn test_discover_inventory_no_gitmodules() {
-        let dir = std::env::temp_dir().join("test_inventory_no_gm");
-        let _ = std::fs::create_dir_all(&dir);
-        let result = discover_inventory(&dir, None).unwrap();
-        assert!(result.nodes.contains_key("phenix"));
-        assert_eq!(result.nodes.len(), 1);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    fn workspace_config_is_the_membership_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("repos/phenix-stitch")).unwrap();
 
-    #[test]
-    fn test_parse_topology_json() {
-        let json = r#"{
-            "version": 1,
-            "workspace": "phenix",
-            "repos": [
-                {"name": "phenix-pins", "role": "pins", "layer": 0, "path": "flakes/00-pins/phenix-pins"},
-                {"name": "phenix-tools", "role": "producer", "layer": 2, "path": "flakes/02-producers/phenix-tools"},
-                {"name": "phenix", "role": "root", "layer": 6, "path": "."}
-            ]
-        }"#;
+        let discovery = discover_inventory_from_config(&config(dir.path()), None).unwrap();
 
-        let topology: TopologyFile = serde_json::from_str(json).unwrap();
-        assert_eq!(topology.repos.len(), 3);
-        assert_eq!(topology.repos[0].name, "phenix-pins");
-        assert_eq!(topology.repos[0].role, RepoRole::Pins);
-        assert_eq!(topology.repos[0].layer, 0);
-        assert_eq!(topology.repos[2].name, "phenix");
-        assert_eq!(topology.repos[2].role, RepoRole::Root);
-    }
-
-    #[test]
-    fn test_role_to_kind_roundtrip() {
-        assert_eq!(role_to_kind(RepoRole::Pins), NodeKind::Pins);
-        assert_eq!(role_to_kind(RepoRole::Producer), NodeKind::ToolProvider);
+        assert_eq!(discovery.nodes.len(), 2);
+        assert!(discovery.nodes["workspace"].is_root);
         assert_eq!(
-            role_to_kind(RepoRole::PkgsAggregator),
-            NodeKind::PackageProvider
+            discovery.nodes["phenix-stitch"].repo_url.as_deref(),
+            Some("github:matthis-k/phenix-stitch")
         );
-        assert_eq!(role_to_kind(RepoRole::Consumer), NodeKind::HostConsumer);
-        assert_eq!(role_to_kind(RepoRole::Root), NodeKind::WorkspaceRoot);
-        assert_eq!(role_to_kind(RepoRole::External), NodeKind::External);
     }
 
     #[test]
-    fn test_kind_to_role_roundtrip() {
-        assert_eq!(kind_to_role(NodeKind::Pins), RepoRole::Pins);
-        assert_eq!(kind_to_role(NodeKind::ToolProvider), RepoRole::Producer);
-        assert_eq!(
-            kind_to_role(NodeKind::PackageProvider),
-            RepoRole::PkgsAggregator
-        );
-        assert_eq!(kind_to_role(NodeKind::HostConsumer), RepoRole::Consumer);
-        assert_eq!(kind_to_role(NodeKind::WorkspaceRoot), RepoRole::Root);
-        assert_eq!(kind_to_role(NodeKind::External), RepoRole::External);
+    fn metadata_only_classifies_existing_members() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("repos/phenix-stitch")).unwrap();
+        let metadata = dir.path().join("metadata.json");
+        std::fs::write(
+            &metadata,
+            r#"{
+                "version": 1,
+                "repos": [
+                    {"name": "workspace", "role": "root", "layer": 6},
+                    {"name": "phenix-stitch", "role": "producer", "layer": 2}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let discovery =
+            discover_inventory_from_config(&config(dir.path()), Some(&metadata)).unwrap();
+
+        assert_eq!(discovery.nodes["phenix-stitch"].role, RepoRole::Producer);
+        assert_eq!(discovery.nodes["phenix-stitch"].layer, Some(2));
+        assert_eq!(discovery.nodes.len(), 2);
+    }
+
+    #[test]
+    fn metadata_cannot_add_workspace_members() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("repos/phenix-stitch")).unwrap();
+        let metadata = dir.path().join("metadata.json");
+        std::fs::write(
+            &metadata,
+            r#"{
+                "version": 1,
+                "repos": [
+                    {"name": "not-discovered", "role": "producer", "layer": 2}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let error = discover_inventory_from_config(&config(dir.path()), Some(&metadata))
+            .err()
+            .unwrap();
+        assert!(error.contains("non-member repository 'not-discovered'"));
     }
 }

@@ -415,14 +415,17 @@ impl McpTool for StitchWorkspaceDiscoverTool {
         "stitch.workspace_discover"
     }
     fn description(&self) -> &str {
-        "Discover workspace repos from locked flake inputs and XDG local mappings"
+        "Discover workspace members from local repositories, locked inputs, and XDG state"
     }
     fn metadata(&self) -> ToolMetadata {
         tool_meta(MutationLevel::ReadOnly)
     }
     fn input_schema(&self) -> Value {
         json!({
-            "workspace": { "type": "string", "description": "Root workspace path (default: current directory)" }
+            "workspace": { "type": "string", "description": "Root workspace path (default: current directory)" },
+            "owner": { "type": "string", "description": "Optional repository remote owner filter" },
+            "repository_pattern": { "type": "string", "description": "Shell-style repository name pattern" },
+            "search_roots": { "type": "array", "items": { "type": "string" } }
         })
     }
     fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
@@ -432,7 +435,31 @@ impl McpTool for StitchWorkspaceDiscoverTool {
             .and_then(|v| v.as_str())
             .unwrap_or(".");
         let root = std::path::Path::new(workspace);
-        let cfg = stitch::workspace::load_workspace_config(root).map_err(|e| {
+        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy::default();
+        policy.owner = input
+            .get("owner")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        if let Some(pattern) = input
+            .get("repository_pattern")
+            .and_then(|value| value.as_str())
+        {
+            policy.repository_pattern = pattern.to_string();
+        }
+        if let Some(search_roots) = input
+            .get("search_roots")
+            .and_then(|value| value.as_array())
+        {
+            let roots = search_roots
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(Into::into)
+                .collect::<Vec<_>>();
+            if !roots.is_empty() {
+                policy.search_roots = roots;
+            }
+        }
+        let cfg = stitch::workspace::load_workspace_config_with_policy(root, Some(policy)).map_err(|e| {
             mk_err(
                 ErrorKind::Internal,
                 &format!("Workspace discovery failed: {e}"),
@@ -550,7 +577,7 @@ impl McpTool for StitchWorkspaceVerifyPlanTool {
         "stitch.workspace_verify_plan"
     }
     fn description(&self) -> &str {
-        "Validate the lock-derived workspace graph and return a structured read-only report"
+        "Validate the discovered workspace graph and return a structured read-only report"
     }
     fn metadata(&self) -> ToolMetadata {
         tool_meta(MutationLevel::ReadOnly)
@@ -572,7 +599,7 @@ impl McpTool for StitchWorkspaceVerifyPlanTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
         let graph =
-            stitch::graph::derive::derive_graph_from_locks(std::path::Path::new(workspace), None)
+            stitch::graph::derive::derive_workspace_graph(std::path::Path::new(workspace), None)
                 .map_err(|e| {
                 mk_err(
                     ErrorKind::Internal,

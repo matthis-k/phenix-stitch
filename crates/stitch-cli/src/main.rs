@@ -144,9 +144,25 @@ fn cmd_workspace(command: &WorkspaceCommand) -> Result<(), String> {
             println!("{}", stitch::workspace::state_file(workspace).display());
             Ok(())
         }
-        WorkspaceCommand::Discover { workspace, json } => {
+        WorkspaceCommand::Discover {
+            workspace,
+            json,
+            owner,
+            repository_pattern,
+            search_root,
+        } => {
             let root = Path::new(workspace);
-            let cfg = stitch::workspace::load_workspace_config(root)?;
+            let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy::default();
+            if let Some(owner) = owner {
+                policy.owner = Some(owner.clone());
+            }
+            if let Some(pattern) = repository_pattern {
+                policy.repository_pattern = pattern.clone();
+            }
+            if !search_root.is_empty() {
+                policy.search_roots = search_root.iter().map(Into::into).collect();
+            }
+            let cfg = stitch::workspace::load_workspace_config_with_policy(root, Some(policy))?;
             if *json {
                 println!(
                     "{}",
@@ -177,7 +193,7 @@ fn cmd_graph(command: &GraphCliCommand) -> Result<(), String> {
                 .map(|p| std::path::Path::new(p).to_path_buf());
             let meta_ref = meta_path.as_deref();
 
-            let graph = stitch::graph::derive::derive_graph_from_locks(root, meta_ref)
+            let graph = stitch::graph::derive::derive_workspace_graph(root, meta_ref)
                 .map_err(|e| format!("Graph derivation failed: {e}"))?;
 
             let fmt = parse_format(format);
@@ -198,7 +214,7 @@ fn cmd_graph(command: &GraphCliCommand) -> Result<(), String> {
                 .map(|p| std::path::Path::new(p).to_path_buf());
             let meta_ref = meta_path.as_deref();
 
-            let graph = stitch::graph::derive::derive_graph_from_locks(root, meta_ref)
+            let graph = stitch::graph::derive::derive_workspace_graph(root, meta_ref)
                 .map_err(|e| format!("Graph derivation failed: {e}"))?;
 
             let opts = stitch::graph::ValidateOptions { strict: *strict };
@@ -225,7 +241,7 @@ fn cmd_graph(command: &GraphCliCommand) -> Result<(), String> {
                 .map(|p| std::path::Path::new(p).to_path_buf());
             let meta_ref = meta_path.as_deref();
 
-            let graph = stitch::graph::derive::derive_graph_from_locks(root, meta_ref)
+            let graph = stitch::graph::derive::derive_workspace_graph(root, meta_ref)
                 .map_err(|e| format!("Graph derivation failed: {e}"))?;
 
             let order = stitch::graph::topo::provider_before_consumer_order(&graph)
@@ -248,7 +264,7 @@ fn cmd_graph(command: &GraphCliCommand) -> Result<(), String> {
                 .map(|p| std::path::Path::new(p).to_path_buf());
             let meta_ref = meta_path.as_deref();
 
-            let graph = stitch::graph::derive::derive_graph_from_locks(root, meta_ref)
+            let graph = stitch::graph::derive::derive_workspace_graph(root, meta_ref)
                 .map_err(|e| format!("Graph derivation failed: {e}"))?;
 
             let fmt = parse_format(format);
@@ -277,7 +293,7 @@ fn cmd_topology(command: &TopologyCommand) -> Result<(), String> {
             let root = std::path::Path::new(workspace);
             let config_path = std::path::Path::new(config);
 
-            let graph = stitch::graph::derive::derive_graph_from_locks(root, Some(config_path))
+            let graph = stitch::graph::derive::derive_workspace_graph(root, Some(config_path))
                 .map_err(|e| format!("Topology derivation failed: {e}"))?;
 
             let report = stitch::graph::validate::validate_graph(
@@ -303,7 +319,7 @@ fn cmd_topology(command: &TopologyCommand) -> Result<(), String> {
             let root = std::path::Path::new(workspace);
             let config_path = std::path::Path::new(config);
 
-            let graph = stitch::graph::derive::derive_graph_from_locks(root, Some(config_path))
+            let graph = stitch::graph::derive::derive_workspace_graph(root, Some(config_path))
                 .map_err(|e| format!("Topology derivation failed: {e}"))?;
 
             let fmt = parse_format(format);
@@ -1268,10 +1284,22 @@ enum WorkspaceCommand {
         #[arg(long, default_value = "phenix", help = "Workspace name")]
         workspace: String,
     },
-    /// Discover repos from flake.lock and optional XDG local mapping
+    /// Discover workspace members from local repositories, locked inputs, and XDG state
     Discover {
         #[arg(long, default_value = ".", help = "Root workspace path")]
         workspace: String,
+        #[arg(long, help = "Require a matching repository remote owner")]
+        owner: Option<String>,
+        #[arg(
+            long,
+            help = "Shell-style repository name pattern; supports '*' and '?'"
+        )]
+        repository_pattern: Option<String>,
+        #[arg(
+            long,
+            help = "Repository search root; may be repeated and may be absolute or workspace-relative"
+        )]
+        search_root: Vec<String>,
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },

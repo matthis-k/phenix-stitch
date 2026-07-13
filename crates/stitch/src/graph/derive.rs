@@ -47,7 +47,7 @@ impl WorkspaceDag {
     }
 }
 
-pub fn derive_graph_from_locks(
+pub fn derive_workspace_graph(
     root: &Path,
     metadata: Option<&Path>,
 ) -> Result<WorkspaceDag, GraphError> {

@@ -1,0 +1,17 @@
++ cat .github/pr2.patch.gz.b64.00 .github/pr2.patch.gz.b64.01a .github/pr2.patch.gz.b64.01b0 .github/pr2.patch.gz.b64.01b1 .github/pr2.patch.gz.b64.01b2 .github/pr2.patch.gz.b64.01b3 .github/pr2.patch.gz.b64.02
++ base64 --decode
++ echo 'de550d52963e6f5328ecbad02a951d80fd5e6f4fdfcb62da5d692a2de3a63640  /tmp/pr2.patch.gz'
++ sha256sum --check
+/tmp/pr2.patch.gz: OK
++ gzip --decompress --stdout /tmp/pr2.patch.gz
++ echo '3421cbf062f66cdab4adcda4f77528d8bbc1e2d71c69141116277fad5b43a610  /tmp/pr2.patch'
++ sha256sum --check
+/tmp/pr2.patch: OK
++ git apply --check /tmp/pr2.patch
++ git apply /tmp/pr2.patch
++ rm -f .github/pr2.patch.b64.00 .github/pr2.patch.b64.01 .github/pr2.patch.b64.02 .github/pr2.patch.b64.03 .github/pr2.patch.b64.04 .github/pr2.patch.b64.05 .github/pr2.patch.b64.06 .github/pr2.patch.b64.07 .github/pr2.patch.b64.08 .github/pr2.patch.gz.b64.00 .github/pr2.patch.gz.b64.01a .github/pr2.patch.gz.b64.01b0 .github/pr2.patch.gz.b64.01b1 .github/pr2.patch.gz.b64.01b2 .github/pr2.patch.gz.b64.01b3 .github/pr2.patch.gz.b64.02
++ rm .github/pr2.apply
++ rm .github/workflows/source-snapshot.yml
++ git config user.name 'github-actions[bot]'
++ git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
++ git add -A
