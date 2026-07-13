@@ -450,11 +450,7 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
                     current[index] = previous[index] || current[index - 1];
                 }
             }
-            b'?' => {
-                for index in 1..=value.len() {
-                    current[index] = previous[index - 1];
-                }
-            }
+            b'?' => current[1..].copy_from_slice(&previous[..value.len()]),
             literal => {
                 for index in 1..=value.len() {
                     current[index] = previous[index - 1] && *literal == value[index - 1];
