@@ -181,14 +181,17 @@
         stitch = {
           type = "app";
           program = "${stitchCliPkg}/bin/stitch";
+          meta.description = "Coordinate changes across a discovered multi-repository workspace";
         };
         stitch-mcp = {
           type = "app";
           program = "${stitchMcpPkg}/bin/stitch-mcp";
+          meta.description = "Expose Stitch orchestration through an MCP server";
         };
         default = {
           type = "app";
           program = "${stitchCliPkg}/bin/stitch";
+          meta.description = "Coordinate changes across a discovered multi-repository workspace";
         };
       };
 
