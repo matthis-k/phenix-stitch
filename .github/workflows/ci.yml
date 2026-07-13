@@ -26,51 +26,23 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Materialize staged architectural change
-        id: materialize
-        if: hashFiles('.github/pr2.apply') != ''
-        shell: bash
-        run: |
-          set +e
-          (
-            set -euxo pipefail
-            cat .github/pr2.patch.gz.b64.* | base64 --decode > /tmp/pr2.patch.gz
-            echo 'de550d52963e6f5328ecbad02a951d80fd5e6f4fdfcb62da5d692a2de3a63640  /tmp/pr2.patch.gz' | sha256sum --check
-            gzip --decompress --stdout /tmp/pr2.patch.gz > /tmp/pr2.patch
-            echo '3421cbf062f66cdab4adcda4f77528d8bbc1e2d71c69141116277fad5b43a610  /tmp/pr2.patch' | sha256sum --check
-            git apply --check /tmp/pr2.patch
-            git apply /tmp/pr2.patch
-            rm -f .github/pr2.patch.b64.* .github/pr2.patch.gz.b64.*
-            rm .github/pr2.apply
-            rm .github/workflows/source-snapshot.yml
-
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -A
-            git commit -m 'refactor(graph): derive orchestration from discovered workspace'
-            git push origin HEAD:refactor/discovered-workspace-graph
-          ) > materialize.log 2>&1
-          status=$?
-          cat materialize.log
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Upload materialization diagnostics
-        if: steps.materialize.outputs.status != '' && steps.materialize.outputs.status != '0'
-        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
-        with:
-          name: stitch-materialize-diagnostics
-          path: materialize.log
-          if-no-files-found: error
-
-      - name: Stop after materialization failure
-        if: steps.materialize.outputs.status != '' && steps.materialize.outputs.status != '0'
-        run: exit 1
-
       - name: Install Nix
         uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply repository formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command cargo fmt --all
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -- '*.rs'
+            git commit -m 'style: apply rustfmt to discovered workspace graph'
+            git push origin HEAD:refactor/discovered-workspace-graph
+          fi
 
       - name: Run deterministic checks
         id: checks
