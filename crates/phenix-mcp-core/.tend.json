@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "node": {
+    "id": "phenix-mcp-core",
+    "description": "Build and test phenix-mcp-core shared infrastructure",
+    "tags": ["tooling", "mcp", "rust", "foundation"],
+    "when": {
+      "changed": {
+        "paths": ["**/*.rs", "Cargo.toml", ".tend.json"]
+      }
+    },
+    "tasks": [
+      {
+        "id": "mcp-core-builds",
+        "phase": "verify",
+        "kind": "command",
+        "command": ["cargo", "build", "-p", "phenix-mcp-core"],
+        "profiles": ["manual", "nix-check"],
+        "tags": ["rust", "build"],
+        "sandbox_safe": true,
+        "mutates": false
+      },
+      {
+        "id": "mcp-core-tests",
+        "phase": "verify",
+        "kind": "command",
+        "command": ["cargo", "test", "-p", "phenix-mcp-core"],
+        "profiles": ["manual", "nix-check"],
+        "tags": ["rust", "test"],
+        "sandbox_safe": true,
+        "mutates": false
+      }
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/phenix-mcp-core",
   "crates/stitch",
   "crates/stitch-cli",
   "crates/stitch-mcp",
