@@ -1,6 +1,7 @@
 name: Source Snapshot
 
 on:
+  pull_request:
   push:
     branches:
       - refactor/explicit-tend-boundary
