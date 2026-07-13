@@ -24,46 +24,23 @@ jobs:
           fetch-depth: 0
           ref: refactor/explicit-tend-boundary
 
-      - name: Restore dependency lock
-        id: restore
+      - name: Regenerate dependency lock
         shell: bash
         run: |
-          set +e
-          (
-            set -euxo pipefail
-            cat .github/cargo-lock.gz.b64.* | base64 --decode > /tmp/Cargo.lock.gz
-            sha256sum /tmp/Cargo.lock.gz
-            gzip --test /tmp/Cargo.lock.gz
-            gzip --decompress --stdout /tmp/Cargo.lock.gz > Cargo.lock
-            sha256sum Cargo.lock
-            cargo metadata --locked --format-version 1 --no-deps > /dev/null
-            git diff --check
-          ) > repair.log 2>&1
-          status=$?
-          cat repair.log
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Upload repair diagnostics
-        if: always()
-        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
-        with:
-          name: cargo-lock-repair-diagnostics
-          path: repair.log
-          if-no-files-found: error
-
-      - name: Stop after reconstruction failure
-        if: steps.restore.outputs.status != '0'
-        run: exit 1
+          set -euo pipefail
+          rm Cargo.lock
+          cargo generate-lockfile
+          cargo metadata --locked --format-version 1 --no-deps > /dev/null
+          git diff --check
 
       - name: Commit dependency lock repair
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/cargo-lock.gz.b64.*
+          rm -f .github/cargo-lock.gz.b64.*
           rm .github/workflows/repair-cargo-lock.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'build(cargo): prune obsolete Tend runner lock entry'
+          git commit -m 'build(cargo): regenerate lock for process-only Tend boundary'
           git push origin HEAD:refactor/explicit-tend-boundary
