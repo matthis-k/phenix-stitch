@@ -336,7 +336,8 @@ impl McpTool for StitchDagTool {
             "repos": { "type": "array", "items": {"type": "string"} },
             "staged": { "type": "boolean", "description": "Use staged files only" },
             "split": { "type": "string", "enum": ["by-repo", "by-path", "manual"] },
-            "run_tend": { "type": "boolean" },
+            "profile": { "type": "string", "description": "Tend profile for prechecks" },
+            "context": { "type": "string", "description": "Tend execution context for prechecks" },
             "json": { "type": "boolean" }
         })
     }
@@ -354,10 +355,21 @@ impl McpTool for StitchDagTool {
             .get("staged")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let run_tend = input
-            .get("run_tend")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        let profile = input
+            .get("profile")
+            .and_then(|value| value.as_str())
+            .unwrap_or("git-hook");
+        let context = input
+            .get("context")
+            .and_then(|value| value.as_str())
+            .unwrap_or("local");
+        if profile.trim().is_empty() || context.trim().is_empty() {
+            return Err(mk_err(
+                ErrorKind::InvalidInput,
+                "Tend profile and context must be non-empty",
+                &audit_id,
+            ));
+        }
         let repo_filter: Vec<String> = input
             .get("repos")
             .and_then(|v| v.as_array())
@@ -385,7 +397,7 @@ impl McpTool for StitchDagTool {
             mode,
             split,
             staged,
-            run_tend,
+            Some((profile, context)),
             &repo_filter,
         )
         .map_err(|e| {
@@ -512,7 +524,8 @@ impl McpTool for StitchWorkspaceDagPlanTool {
             "repos": { "type": "array", "items": {"type": "string"} },
             "staged": { "type": "boolean" },
             "split": { "type": "string", "enum": ["by-repo", "by-path", "manual"] },
-            "run_tend": { "type": "boolean" }
+            "profile": { "type": "string", "description": "Tend profile for prechecks" },
+            "context": { "type": "string", "description": "Tend execution context for prechecks" }
         })
     }
     fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
@@ -529,10 +542,21 @@ impl McpTool for StitchWorkspaceDagPlanTool {
             .get("staged")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let run_tend = input
-            .get("run_tend")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        let profile = input
+            .get("profile")
+            .and_then(|value| value.as_str())
+            .unwrap_or("git-hook");
+        let context = input
+            .get("context")
+            .and_then(|value| value.as_str())
+            .unwrap_or("local");
+        if profile.trim().is_empty() || context.trim().is_empty() {
+            return Err(mk_err(
+                ErrorKind::InvalidInput,
+                "Tend profile and context must be non-empty",
+                &audit_id,
+            ));
+        }
         let repo_filter: Vec<String> = input
             .get("repos")
             .and_then(|v| v.as_array())
@@ -550,7 +574,7 @@ impl McpTool for StitchWorkspaceDagPlanTool {
             mode,
             split,
             staged,
-            run_tend,
+            Some((profile, context)),
             &repo_filter,
         )
         .map_err(|e| {
@@ -1054,7 +1078,9 @@ impl McpTool for StitchSyncTool {
             "scope": { "type": "array", "items": {"type": "string"}, "description": "Repo names to sync (empty = all changed)" },
             "repos": { "type": "array", "items": {"type": "string"} },
             "mode": { "type": "string", "enum": ["pull", "push", "full"] },
-            "run_tend": { "type": "boolean", "description": "Run tend checks before sync" },
+            "profile": { "type": "string", "description": "Tend verification profile" },
+            "context": { "type": "string", "description": "Tend execution context" },
+            "no_verify": { "type": "boolean", "description": "Skip Tend verification" },
             "no_push": { "type": "boolean", "description": "Skip push step" }
         })
     }
@@ -1072,10 +1098,25 @@ impl McpTool for StitchSyncTool {
             .get("no_push")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let run_tend = input
-            .get("run_tend")
-            .and_then(|v| v.as_bool())
+        let profile = input
+            .get("profile")
+            .and_then(|value| value.as_str())
+            .unwrap_or("pre-push");
+        let context = input
+            .get("context")
+            .and_then(|value| value.as_str())
+            .unwrap_or("local");
+        let no_verify = input
+            .get("no_verify")
+            .and_then(|value| value.as_bool())
             .unwrap_or(false);
+        if !no_verify && (profile.trim().is_empty() || context.trim().is_empty()) {
+            return Err(mk_err(
+                ErrorKind::InvalidInput,
+                "Tend profile and context must be non-empty unless no_verify is true",
+                &audit_id,
+            ));
+        }
         let _mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("push");
         let repo_filter: Vec<String> = input
             .get("repos")
@@ -1166,13 +1207,16 @@ impl McpTool for StitchSyncTool {
                 });
             }
 
-            if run_tend {
+            if !no_verify {
                 steps.push(exec::ExecutionStep {
-                    id: "tend-check".to_string(),
+                    id: format!("tend-{profile}-{context}"),
                     mode: exec::ExecutionMode::ReadOnly,
                     kind: exec::StepKind::Builtin {
                         name: "tend.check".to_string(),
-                        args: json!({"profile": "pre-push", "affected_dag": true}),
+                        args: json!({
+                            "profile": profile,
+                            "context": context,
+                        }),
                     },
                     condition: Some(exec::StepCondition::DirectlyChanged),
                 });
