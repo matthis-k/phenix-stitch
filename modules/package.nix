@@ -110,23 +110,25 @@
           pkgs.git
         ];
 
-        cargo-fmt =
-          mkCargoCheck "phenix-stitch-cargo-fmt" "cargo fmt --all --check" rustToolchain;
+        cargo-fmt = mkCargoCheck "phenix-stitch-cargo-fmt" "cargo fmt --all --check" rustToolchain;
 
         cargo-clippy =
           mkCargoCheck "phenix-stitch-cargo-clippy"
             "cargo clippy --quiet --workspace --all-targets -- -D warnings"
             rustToolchain;
 
-        tend-config = pkgs.runCommand "phenix-stitch-tend-config" {
-          nativeBuildInputs = [ tendPkg ];
-          src = source;
-        } ''
-          cp -rT $src source
-          chmod -R u+w source
-          tend --root source validate
-          touch $out
-        '';
+        tend-config =
+          pkgs.runCommand "phenix-stitch-tend-config"
+            {
+              nativeBuildInputs = [ tendPkg ];
+              src = source;
+            }
+            ''
+              cp -rT $src source
+              chmod -R u+w source
+              tend --root source validate
+              touch $out
+            '';
 
         local-gate =
           pkgs.runCommand "phenix-stitch-local-gate"
