@@ -533,7 +533,6 @@ mod tests {
         assert!(!glob_matches("phenix-*", "newxos"));
     }
 
-
     #[test]
     fn unconstrained_policy_does_not_promote_external_locked_inputs() {
         let directory = tempfile::tempdir().unwrap();

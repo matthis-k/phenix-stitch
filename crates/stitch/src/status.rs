@@ -73,9 +73,13 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
 
     let metadata = root.join(".stitch").join("topology.json");
     let metadata = metadata.exists().then_some(metadata);
-    let graph_report = graph::derive::derive_workspace_graph(root, metadata.as_deref()).map(|dag| {
-        graph::validate::validate_graph(&dag, &graph::validate::ValidateOptions { strict: true })
-    });
+    let graph_report =
+        graph::derive::derive_workspace_graph(root, metadata.as_deref()).map(|dag| {
+            graph::validate::validate_graph(
+                &dag,
+                &graph::validate::ValidateOptions { strict: true },
+            )
+        });
     checks.push(IntegrationCheck {
         name: "workspace.graph".to_string(),
         passed: graph_report.as_ref().is_ok_and(|report| report.valid),

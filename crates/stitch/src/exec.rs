@@ -579,7 +579,10 @@ pub fn build_scope(
         let graph_node = canonical_graph
             .node(&name)
             .ok_or_else(|| format!("Node '{name}' missing from canonical graph"))?;
-        let layer = graph_node.layer.or_else(|| graph_node.role.layer()).unwrap_or(999);
+        let layer = graph_node
+            .layer
+            .or_else(|| graph_node.role.layer())
+            .unwrap_or(999);
         let role = graph_node.role.as_str().to_string();
         let _status = statuses.iter().find(|s| s.name == name);
         let directly_selected = selected_set.contains(&name);

@@ -446,10 +446,7 @@ impl McpTool for StitchWorkspaceDiscoverTool {
         {
             policy.repository_pattern = pattern.to_string();
         }
-        if let Some(search_roots) = input
-            .get("search_roots")
-            .and_then(|value| value.as_array())
-        {
+        if let Some(search_roots) = input.get("search_roots").and_then(|value| value.as_array()) {
             let roots = search_roots
                 .iter()
                 .filter_map(|value| value.as_str())
@@ -459,13 +456,14 @@ impl McpTool for StitchWorkspaceDiscoverTool {
                 policy.search_roots = roots;
             }
         }
-        let cfg = stitch::workspace::load_workspace_config_with_policy(root, Some(policy)).map_err(|e| {
-            mk_err(
-                ErrorKind::Internal,
-                &format!("Workspace discovery failed: {e}"),
-                &audit_id,
-            )
-        })?;
+        let cfg = stitch::workspace::load_workspace_config_with_policy(root, Some(policy))
+            .map_err(|e| {
+                mk_err(
+                    ErrorKind::Internal,
+                    &format!("Workspace discovery failed: {e}"),
+                    &audit_id,
+                )
+            })?;
         let repos = cfg
             .repos
             .iter()
@@ -601,12 +599,12 @@ impl McpTool for StitchWorkspaceVerifyPlanTool {
         let graph =
             stitch::graph::derive::derive_workspace_graph(std::path::Path::new(workspace), None)
                 .map_err(|e| {
-                mk_err(
-                    ErrorKind::Internal,
-                    &format!("Graph derivation failed: {e}"),
-                    &audit_id,
-                )
-            })?;
+                    mk_err(
+                        ErrorKind::Internal,
+                        &format!("Graph derivation failed: {e}"),
+                        &audit_id,
+                    )
+                })?;
         let report = stitch::graph::validate::validate_graph(
             &graph,
             &stitch::graph::ValidateOptions { strict },
