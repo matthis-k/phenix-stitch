@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -1559,7 +1561,6 @@ pub fn print_plan(plan: &ExecutionPlan, json: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
