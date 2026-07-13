@@ -36,5 +36,5 @@ jobs:
           set +e
           nix flake check --print-build-logs > ci.log 2>&1
           status=$?
-          tail -n 250 ci.log
+          tail -n 80 ci.log
           exit "$status"
