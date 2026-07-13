@@ -23,7 +23,9 @@
         pkgs.jujutsu
       ];
 
-      cargoLock.lockFile = ../Cargo.lock;
+      cargoLock = {
+        lockFile = ../Cargo.lock;
+      };
 
       stitchCliUnwrapped = pkgs.rustPlatform.buildRustPackage {
         pname = "stitch-unwrapped";
