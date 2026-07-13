@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          {
+          (
             set -euxo pipefail
             cat .github/pr2.patch.b64.* | base64 --decode > /tmp/pr2.patch
             sha256sum /tmp/pr2.patch
@@ -48,7 +48,7 @@ jobs:
             git add -A
             git commit -m 'refactor(graph): derive orchestration from discovered workspace'
             git push origin HEAD:refactor/discovered-workspace-graph
-          } > materialize.log 2>&1
+          ) > materialize.log 2>&1
           status=$?
           cat materialize.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
