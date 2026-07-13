@@ -74,9 +74,7 @@ pub fn load_workspace_config_with_policy(
     root: &Path,
     policy_override: Option<WorkspaceDiscoveryPolicy>,
 ) -> Result<WorkspaceConfig, String> {
-    let root = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let workspace = workspace_name(&root);
     let state = load_state(&workspace).ok();
     let policy = resolve_discovery_policy(state.as_ref(), policy_override)?;
@@ -127,8 +125,8 @@ pub fn save_state(workspace: &str, state: &WorkspaceState) -> Result<(), String>
         .map_err(|e| format!("Create workspace state directory {}: {e}", parent.display()))?;
 
     let temporary = path.with_extension("json.tmp");
-    let payload = serde_json::to_vec_pretty(state)
-        .map_err(|e| format!("Serialize workspace state: {e}"))?;
+    let payload =
+        serde_json::to_vec_pretty(state).map_err(|e| format!("Serialize workspace state: {e}"))?;
     std::fs::write(&temporary, payload)
         .map_err(|e| format!("Write workspace state {}: {e}", temporary.display()))?;
     std::fs::rename(&temporary, &path)
@@ -329,10 +327,7 @@ fn apply_state_repositories(
     };
 
     for (name, configured) in &state.repos {
-        let identity = configured
-            .remote
-            .as_deref()
-            .and_then(parse_remote_identity);
+        let identity = configured.remote.as_deref().and_then(parse_remote_identity);
         let repository_name = identity
             .as_ref()
             .map(|identity| identity.repository.as_str())
