@@ -23,6 +23,13 @@
         pkgs.jujutsu
       ];
 
+      qualityRuntime = [
+        pkgs.nixfmt
+        pkgs.statix
+        pkgs.deadnix
+      ]
+      ++ rustToolchain;
+
       cargoLock = {
         lockFile = ../Cargo.lock;
       };
@@ -63,32 +70,115 @@
 
       cargoDeps = stitchCliUnwrapped.cargoDeps or (throw "cargoDeps not found");
 
-      mkCargoCheck =
-        name: cargoArgs: extraNativeBuildInputs:
-        pkgs.runCommand name
+      tendGate =
+        pkgs.runCommand "phenix-stitch-tend-gate"
           {
-            nativeBuildInputs = extraNativeBuildInputs ++ [ pkgs.stdenv.cc ];
+            nativeBuildInputs = [
+              tendPkg
+              pkgs.git
+              pkgs.stdenv.cc
+            ]
+            ++ qualityRuntime;
             inherit cargoDeps;
             src = source;
           }
           ''
             export HOME=$TMPDIR/home
-            mkdir -p $HOME
+            mkdir -p "$HOME"
             export CARGO_HOME=$TMPDIR/cargo
             export CARGO_TARGET_DIR=$TMPDIR/target
-            mkdir -p $CARGO_HOME $CARGO_TARGET_DIR
+            mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
 
-            cp -rT $src source
+            cp -rT "$src" source
             chmod -R u+w source
             cd source
 
             cp -r ${cargoDeps}/.cargo .cargo
             ln -s ${cargoDeps} cargo-vendor-dir
 
-            ${cargoArgs}
+            git init --quiet
+            git add -A
 
-            touch $out
+            tend --root . check --profile full --context nix-sandbox
+
+            touch "$out"
           '';
+
+      tendFix = pkgs.writeShellApplication {
+        name = "tend-fix";
+        runtimeInputs = [
+          tendPkg
+          pkgs.git
+        ];
+        text = ''
+          repo_root="$(git rev-parse --show-toplevel)"
+          cd "$repo_root"
+
+          mapfile -d '' staged_files < <(
+            git diff --cached --name-only --diff-filter=ACMR -z
+          )
+
+          partially_staged=()
+          for file in "''${staged_files[@]}"; do
+            [[ -e "$file" ]] || continue
+            if ! git diff --quiet -- "$file"; then
+              partially_staged+=("$file")
+            fi
+          done
+
+          if (( ''${#partially_staged[@]} > 0 )); then
+            printf '%s\n' \
+              'Cannot apply staged repairs to partially staged files.' \
+              'Stage or stash their remaining changes first:' >&2
+            printf '  %s\n' "''${partially_staged[@]}" >&2
+            exit 1
+          fi
+
+          tend check --profile fix --context local
+
+          if (( ''${#staged_files[@]} > 0 )); then
+            git add -- "''${staged_files[@]}"
+          fi
+
+          exec tend check --profile git-hook --context local
+        '';
+      };
+
+      tendVerify = pkgs.writeShellApplication {
+        name = "tend-verify";
+        runtimeInputs = [ tendPkg ];
+        text = ''
+          exec tend check --profile manual --context local "$@"
+        '';
+      };
+
+      tendPrePush = pkgs.writeShellApplication {
+        name = "tend-pre-push";
+        runtimeInputs = [ tendPkg ];
+        text = ''
+          exec tend check --profile pre-push --context local "$@"
+        '';
+      };
+
+      gitHooks = pkgs.runCommand "phenix-stitch-git-hooks" { } ''
+        mkdir -p "$out"
+
+        cat > "$out/pre-commit" <<'EOF'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        repo_root="$(${pkgs.git}/bin/git rev-parse --show-toplevel)"
+        exec ${pkgs.nix}/bin/nix develop "$repo_root" --command tend-fix
+        EOF
+
+        cat > "$out/pre-push" <<'EOF'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        repo_root="$(${pkgs.git}/bin/git rev-parse --show-toplevel)"
+        exec ${pkgs.nix}/bin/nix develop "$repo_root" --command tend-pre-push
+        EOF
+
+        chmod +x "$out/pre-commit" "$out/pre-push"
+      '';
     in
     {
       packages = {
@@ -100,81 +190,9 @@
       };
 
       checks = {
-        cargo-check =
-          mkCargoCheck "phenix-stitch-cargo-check" "cargo check --workspace --all-targets"
-            rustToolchain;
-
-        cargo-test = mkCargoCheck "phenix-stitch-cargo-test" "cargo test --workspace" [
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.git
-        ];
-
-        cargo-fmt = mkCargoCheck "phenix-stitch-cargo-fmt" "cargo fmt --all --check" rustToolchain;
-
-        cargo-clippy =
-          mkCargoCheck "phenix-stitch-cargo-clippy"
-            "cargo clippy --quiet --workspace --all-targets -- -D warnings"
-            rustToolchain;
-
-        tend-config =
-          pkgs.runCommand "phenix-stitch-tend-config"
-            {
-              nativeBuildInputs = [ tendPkg ];
-              src = source;
-            }
-            ''
-              cp -rT $src source
-              chmod -R u+w source
-              tend --root source validate
-              touch $out
-            '';
-
-        local-gate =
-          pkgs.runCommand "phenix-stitch-local-gate"
-            {
-              nativeBuildInputs = [
-                stitchCliPkg
-                tendPkg
-                pkgs.git
-                pkgs.nixfmt
-                pkgs.statix
-                pkgs.deadnix
-                pkgs.stdenv.cc
-              ]
-              ++ rustToolchain;
-              inherit cargoDeps;
-              src = source;
-            }
-            ''
-              export HOME=$TMPDIR/home
-              mkdir -p $HOME
-              export CARGO_HOME=$TMPDIR/cargo
-              export CARGO_TARGET_DIR=$TMPDIR/target
-              mkdir -p $CARGO_HOME $CARGO_TARGET_DIR
-
-              cp -rT $src source
-              chmod -R u+w source
-              cd source
-
-              cp -r ${cargoDeps}/.cargo .cargo
-              ln -s ${cargoDeps} cargo-vendor-dir
-
-              git init --quiet
-              git add -A
-
-              tend --root . validate
-              cargo fmt --all --check
-              cargo check --workspace --all-targets
-              cargo clippy --quiet --workspace --all-targets -- -D warnings
-              cargo test --workspace
-              find modules -name '*.nix' -print0 | xargs -0 -r nixfmt --check
-              find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt --check
-              statix check
-              deadnix --fail --no-lambda-arg --no-lambda-pattern-names
-
-              touch $out
-            '';
+        stitch-package = stitchCliPkg;
+        stitch-mcp-package = stitchMcpPkg;
+        tend-gate = tendGate;
       };
 
       apps = {
@@ -200,22 +218,30 @@
         packages = [
           stitchCliPkg
           tendPkg
+          tendFix
+          tendVerify
+          tendPrePush
           pkgs.rust-analyzer
           pkgs.git
           pkgs.nix
-          pkgs.nixfmt
-          pkgs.statix
-          pkgs.deadnix
           pkgs.jujutsu
         ]
-        ++ rustToolchain;
+        ++ qualityRuntime;
         shellHook = ''
+          if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+            git -C "$repo_root" config --local core.hooksPath ${gitHooks}
+            hooks_status="enabled"
+          else
+            hooks_status="not in a Git repository"
+          fi
+
           echo "phenix-stitch dev shell"
-          echo "  cargo:  $(cargo --version 2>/dev/null || echo '?')"
-          echo "  rustc:  $(rustc --version 2>/dev/null || echo '?')"
-          echo "  stitch: $(stitch --version 2>/dev/null || echo '?')"
-          echo "  tend:   $(tend --version 2>/dev/null || echo '?')"
-          echo "  jj:     $(jj --version 2>/dev/null || echo '?')"
+          echo "  hooks:   $hooks_status"
+          echo "  fix:     tend-fix"
+          echo "  verify:  tend-verify"
+          echo "  prepush: tend-pre-push"
+          echo "  stitch:  $(stitch --version 2>/dev/null || echo '?')"
+          echo "  tend:    $(tend --version 2>/dev/null || echo '?')"
         '';
       };
     };
