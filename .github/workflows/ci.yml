@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -24,35 +24,6 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
-
-      - name: Repair test-only collection import
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("crates/stitch/src/exec.rs")
-          text = path.read_text()
-          text = text.replace(
-              "use std::collections::BTreeSet;\n",
-              "#[cfg(test)]\nuse std::collections::BTreeMap;\nuse std::collections::BTreeSet;\n",
-              1,
-          )
-          text = text.replace(
-              "    use super::*;\n    use std::collections::BTreeMap;\n",
-              "    use super::*;\n",
-              1,
-          )
-          path.write_text(text)
-          PY
-          git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add crates/stitch/src/exec.rs
-          git commit -m 'fix(graph): scope BTreeMap to test builds'
-          git push origin HEAD:refactor/discovered-workspace-graph
 
       - name: Install Nix
         uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
