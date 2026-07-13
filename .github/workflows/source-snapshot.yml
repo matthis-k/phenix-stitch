@@ -28,6 +28,7 @@ jobs:
           git apply --check /tmp/pr2.patch
           git apply /tmp/pr2.patch
           rm .github/pr2.patch.b64.*
+          rm .github/pr2.apply
           rm .github/workflows/source-snapshot.yml
 
       - name: Commit architectural change
