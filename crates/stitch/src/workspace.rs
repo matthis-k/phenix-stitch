@@ -263,6 +263,14 @@ fn apply_locked_inputs(
     matcher: &RepositoryMatcher,
     repos: &mut BTreeMap<String, RepoConfig>,
 ) -> Result<(), String> {
+    // Locked inputs are dependency evidence, not implicit workspace membership.
+    // They may contribute missing members only when the caller supplied an
+    // actual owner or name constraint that distinguishes workspace repos from
+    // external dependencies such as nixpkgs.
+    if policy.owner.is_none() && policy.repository_pattern == "*" {
+        return Ok(());
+    }
+
     let lock_path = root.join("flake.lock");
     if !lock_path.exists() {
         return Ok(());
@@ -523,6 +531,38 @@ mod tests {
         assert!(glob_matches("phenix-????", "phenix-tend"));
         assert!(!glob_matches("phenix-????", "phenix-stitch"));
         assert!(!glob_matches("phenix-*", "newxos"));
+    }
+
+    #[test]
+    fn unconstrained_policy_does_not_promote_external_locked_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("flake.lock"),
+            r#"{
+                "nodes": {
+                    "root": {"inputs": {"nixpkgs": "nixpkgs"}},
+                    "nixpkgs": {
+                        "locked": {
+                            "type": "github",
+                            "owner": "NixOS",
+                            "repo": "nixpkgs"
+                        }
+                    }
+                },
+                "root": "root",
+                "version": 7
+            }"#,
+        )
+        .unwrap();
+
+        let config = load_workspace_config_with_policy(
+            directory.path(),
+            Some(WorkspaceDiscoveryPolicy::default()),
+        )
+        .unwrap();
+
+        assert_eq!(config.repos.len(), 1);
+        assert!(!config.repos.iter().any(|repo| repo.name == "nixpkgs"));
     }
 
     #[test]

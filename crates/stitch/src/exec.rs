@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -187,49 +189,6 @@ pub fn parse_condition(s: &str) -> Result<StepCondition, String> {
     }
 }
 
-fn load_topology(cfg: &WorkspaceConfig) -> Result<BTreeMap<String, (u32, String)>, String> {
-    let root = cfg.config_dir.as_deref().unwrap_or(Path::new("."));
-    let topo_path = root.join(".stitch").join("topology.json");
-    if !topo_path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let content = std::fs::read_to_string(&topo_path)
-        .map_err(|e| format!("Failed to read topology {}: {e}", topo_path.display()))?;
-    let val: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse topology {}: {e}", topo_path.display()))?;
-    let repos = val.get("repos").and_then(|v| v.as_array()).ok_or_else(|| {
-        format!(
-            "Topology file {} missing 'repos' array",
-            topo_path.display()
-        )
-    })?;
-
-    if repos.is_empty() {
-        return Err(format!(
-            "Topology file {} has empty 'repos' array",
-            topo_path.display()
-        ));
-    }
-
-    let mut topo = BTreeMap::new();
-    for repo in repos {
-        let name = repo.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-            format!(
-                "Topology entry in {} missing 'name' field",
-                topo_path.display()
-            )
-        })?;
-        let role = repo
-            .get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let layer = repo.get("layer").and_then(|v| v.as_u64()).unwrap_or(999) as u32;
-        topo.insert(name.to_string(), (layer, role));
-    }
-    Ok(topo)
-}
-
 fn is_node_dirty(path: &Path) -> bool {
     if !path.join(".git").exists() {
         return false;
@@ -294,15 +253,10 @@ pub(crate) fn load_canonical_graph(
         "Cannot derive Stitch DAG: workspace config directory is unavailable".to_string()
     })?;
     let metadata = root.join(".stitch").join("topology.json");
-    if !metadata.exists() {
-        return Err(format!(
-            "Cannot derive Stitch DAG: topology metadata is missing at {}",
-            metadata.display()
-        ));
-    }
+    let metadata = metadata.exists().then_some(metadata);
 
-    let dag = graph::derive::derive_graph_from_locks(root, Some(&metadata))
-        .map_err(|e| format!("Cannot derive Stitch DAG from canonical topology: {e}"))?;
+    let dag = graph::derive::derive_workspace_graph_from_config(cfg, metadata.as_deref())
+        .map_err(|e| format!("Cannot derive Stitch DAG from discovered workspace: {e}"))?;
     let report =
         graph::validate::validate_graph(&dag, &graph::validate::ValidateOptions::default());
     if !report.valid {
@@ -545,7 +499,6 @@ pub fn build_scope(
     cfg: &WorkspaceConfig,
     scope: &ExecutionScope,
 ) -> Result<Vec<ExecutionNode>, String> {
-    let topo = load_topology(cfg)?;
     let config_order = config_order(cfg);
     let all_names: Vec<String> = cfg.repos.iter().map(|r| r.name.clone()).collect();
     let statuses = status::collect_all(cfg)?;
@@ -625,7 +578,14 @@ pub fn build_scope(
             .find(|r| r.name == name)
             .ok_or_else(|| format!("Node '{name}' not found in config"))?;
         let path = repo.resolved_path(cfg);
-        let layer = topo.get(&name).cloned().unwrap_or((999, String::new()));
+        let graph_node = canonical_graph
+            .node(&name)
+            .ok_or_else(|| format!("Node '{name}' missing from canonical graph"))?;
+        let layer = graph_node
+            .layer
+            .or_else(|| graph_node.role.layer())
+            .unwrap_or(999);
+        let role = graph_node.role.as_str().to_string();
         let _status = statuses.iter().find(|s| s.name == name);
         let directly_selected = selected_set.contains(&name);
         let directly_changed = changed_set.contains(&name);
@@ -633,8 +593,8 @@ pub fn build_scope(
         result.push(ExecutionNode {
             name: name.clone(),
             path,
-            role: Some(layer.1),
-            layer: layer.0,
+            role: Some(role),
+            layer,
             directly_selected,
             directly_changed,
             downstream_only: downstream_set.contains(&name) && !directly_selected,
@@ -1657,10 +1617,10 @@ mod tests {
               "version": 1,
               "workspace": "test",
               "repos": [
-                { "name": "pins", "role": "pins", "layer": 0, "path": "flakes/00-pins/pins" },
-                { "name": "tools", "role": "producer", "layer": 2, "path": "flakes/02-producers/tools" },
-                { "name": "hosts", "role": "consumer", "layer": 5, "path": "flakes/05-consumers/hosts" },
-                { "name": "phenix", "role": "root", "layer": 6, "path": "." }
+                { "name": "pins", "role": "pins", "layer": 0 },
+                { "name": "tools", "role": "producer", "layer": 2 },
+                { "name": "hosts", "role": "consumer", "layer": 5 },
+                { "name": "phenix", "role": "root", "layer": 6 }
               ]
             }"#,
         )
@@ -2108,6 +2068,24 @@ mod tests {
         let mut sorted: Vec<String> = result;
         sorted.sort();
         assert_eq!(sorted, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn discovered_graph_does_not_require_topology_metadata() {
+        let cfg = make_test_cfg();
+        let root = cfg.config_dir.as_ref().unwrap();
+        std::fs::remove_file(root.join(".stitch/topology.json")).unwrap();
+        let scope = ExecutionScope {
+            selection: SelectionMode::Explicit,
+            explicit_nodes: vec!["pins".to_string()],
+            closure: ClosureMode::Downstream,
+            order: OrderMode::ProvidersFirst,
+        };
+
+        let nodes = build_scope(&cfg, &scope).unwrap();
+        let names = nodes.into_iter().map(|node| node.name).collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["pins", "tools", "hosts"]);
     }
 
     #[test]

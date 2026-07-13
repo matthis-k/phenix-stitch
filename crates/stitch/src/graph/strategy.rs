@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::graph::inventory::discover_inventory;
+use crate::graph::inventory::{
+    discover_inventory, discover_inventory_from_config, WorkspaceDiscovery,
+};
 use crate::graph::lock::{
     build_workspace_aliases, external_from_lock, input_target_name, map_lock_target_to_workspace,
     parse_flake_lock,
@@ -12,18 +14,26 @@ use crate::graph::spec::{
 };
 use crate::graph::validate::GraphDiagnostic;
 use crate::graph::NodeKind;
+use crate::model::WorkspaceConfig;
 
 #[derive(Debug, Default)]
 pub struct FlakeLocksStrategy;
 
-impl DagGenerationStrategy for FlakeLocksStrategy {
-    fn name(&self) -> &'static str {
-        "flake-locks"
+impl FlakeLocksStrategy {
+    pub fn generate_from_config(
+        &self,
+        config: &WorkspaceConfig,
+        metadata: Option<&Path>,
+    ) -> Result<WorkspaceGraphDraft, StrategyError> {
+        let discovery = discover_inventory_from_config(config, metadata)
+            .map_err(|error| StrategyError::new(self.name(), error))?;
+        self.generate_from_discovery(discovery)
     }
 
-    fn generate(&self, ctx: &GenerationContext) -> Result<WorkspaceGraphDraft, StrategyError> {
-        let discovery = discover_inventory(&ctx.root, ctx.metadata.as_deref())
-            .map_err(|e| StrategyError::new(self.name(), e))?;
+    fn generate_from_discovery(
+        &self,
+        discovery: WorkspaceDiscovery,
+    ) -> Result<WorkspaceGraphDraft, StrategyError> {
         let aliases = build_workspace_aliases(&discovery.nodes);
         let nodes: BTreeMap<String, NodeSpec> = discovery
             .nodes
@@ -50,10 +60,10 @@ impl DagGenerationStrategy for FlakeLocksStrategy {
 
             let lock = match parse_flake_lock(&lock_path) {
                 Ok(lock) => lock,
-                Err(e) => {
+                Err(error) => {
                     draft.diagnostics.push(GraphDiagnostic::error(
                         "parse_flake_lock_failed",
-                        format!("node '{node_id}': {e}"),
+                        format!("node '{node_id}': {error}"),
                         vec![node_id.clone()],
                     ));
                     continue;
@@ -77,7 +87,13 @@ impl DagGenerationStrategy for FlakeLocksStrategy {
                     continue;
                 };
                 let Some(target_lock_node) = lock.nodes.get(&lock_target_name) else {
-                    draft.diagnostics.push(GraphDiagnostic::error("input_target_missing", format!("node '{node_id}': input '{input_name}' targets '{lock_target_name}' not found in lock"), vec![node_id.clone()]));
+                    draft.diagnostics.push(GraphDiagnostic::error(
+                        "input_target_missing",
+                        format!(
+                            "node '{node_id}': input '{input_name}' targets '{lock_target_name}' not found in lock"
+                        ),
+                        vec![node_id.clone()],
+                    ));
                     continue;
                 };
                 if let Some(workspace_target_id) =
@@ -105,6 +121,18 @@ impl DagGenerationStrategy for FlakeLocksStrategy {
 
         draft.dedup_edges();
         Ok(draft)
+    }
+}
+
+impl DagGenerationStrategy for FlakeLocksStrategy {
+    fn name(&self) -> &'static str {
+        "flake-locks"
+    }
+
+    fn generate(&self, ctx: &GenerationContext) -> Result<WorkspaceGraphDraft, StrategyError> {
+        let discovery = discover_inventory(&ctx.root, ctx.metadata.as_deref())
+            .map_err(|error| StrategyError::new(self.name(), error))?;
+        self.generate_from_discovery(discovery)
     }
 }
 

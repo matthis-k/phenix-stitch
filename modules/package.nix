@@ -183,14 +183,13 @@
           pkgs.git
           pkgs.nix
           pkgs.jujutsu
-          stitchCliPkg
         ]
         ++ rustToolchain;
         shellHook = ''
           echo "phenix-stitch dev shell"
           echo "  cargo: $(cargo --version 2>/dev/null || echo '?')"
           echo "  rustc: $(rustc --version 2>/dev/null || echo '?')"
-          echo "  stitch: $(stitch --version 2>/dev/null || echo '?')"
+          echo "  stitch: cargo run -p stitch-cli -- <args>"
           echo "  jj: $(jj --version 2>/dev/null || echo 'not installed')"
         '';
       };

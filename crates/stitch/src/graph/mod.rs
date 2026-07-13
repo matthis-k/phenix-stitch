@@ -18,8 +18,8 @@ pub mod topo;
 pub mod validate;
 
 pub use canonical::{CanonicalWorkspaceGraph, CanonicalizeError};
-pub use derive::derive_graph_from_locks;
-pub use inventory::{discover_inventory, InventoryOptions, WorkspaceDiscovery};
+pub use derive::{derive_workspace_graph, derive_workspace_graph_from_config};
+pub use inventory::{discover_inventory, discover_inventory_from_config, WorkspaceDiscovery};
 pub use lock::parse_flake_lock;
 pub use planner::{
     DagPlan, DagPlanRequest, DagPlanner, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
@@ -94,6 +94,22 @@ pub enum RepoRole {
 }
 
 impl RepoRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RepoRole::Pins => "pins",
+            RepoRole::Lib => "lib",
+            RepoRole::PkgsBase => "pkgs-base",
+            RepoRole::Protocols => "protocols",
+            RepoRole::Producer => "producer",
+            RepoRole::Integration => "integration",
+            RepoRole::PkgsAggregator => "pkgs-aggregator",
+            RepoRole::Consumer => "consumer",
+            RepoRole::Root => "root",
+            RepoRole::External => "external",
+            RepoRole::Unknown => "unknown",
+        }
+    }
+
     pub fn layer(self) -> Option<u32> {
         Some(match self {
             RepoRole::Pins => 0,

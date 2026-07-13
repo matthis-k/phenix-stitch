@@ -19,8 +19,8 @@ pub use exec::{
 };
 pub use graph::{
     canonical::{CanonicalWorkspaceGraph, CanonicalizeError},
-    derive::derive_graph_from_locks,
-    inventory::{discover_inventory, InventoryOptions},
+    derive::{derive_workspace_graph, derive_workspace_graph_from_config},
+    inventory::{discover_inventory, discover_inventory_from_config, WorkspaceDiscovery},
     lock::parse_flake_lock,
     planner::{
         DagPlan, DagPlanRequest, DagPlanner, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
