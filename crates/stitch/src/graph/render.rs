@@ -44,7 +44,7 @@ pub fn operation_dag_json(
     mode: &str,
     split: &str,
     staged: bool,
-    run_tend: bool,
+    verification: Option<(&str, &str)>,
     repo_filter: &[String],
 ) -> Result<serde_json::Value, String> {
     let statuses = crate::status::collect_all(cfg)?;
@@ -71,11 +71,19 @@ pub fn operation_dag_json(
             })
             .unwrap_or_default();
 
-        if run_tend && mode != "sync" {
+        if let Some((profile, context)) = verification.filter(|_| mode != "sync") {
             nodes.push(serde_json::json!({
                 "id": format!("{}:precheck", s.name),
-                "kind": "check", "repo": s.name,
-                "command": ["tend", "run", "--changed"],
+                "kind": "check",
+                "repo": s.name,
+                "command": [
+                    "tend",
+                    "check",
+                    "--profile",
+                    profile,
+                    "--context",
+                    context
+                ],
                 "depends_on": []
             }));
         }
@@ -92,7 +100,7 @@ pub fn operation_dag_json(
                     by_dir.entry(dir).or_default().push(f.clone());
                 }
                 for (dir, files) in &by_dir {
-                    let deps = if run_tend && mode != "sync" {
+                    let deps = if verification.is_some() && mode != "sync" {
                         vec![format!("{}:precheck", s.name)]
                     } else {
                         vec![]
@@ -105,7 +113,7 @@ pub fn operation_dag_json(
                 }
             }
             _ => {
-                let deps = if run_tend && mode != "sync" {
+                let deps = if verification.is_some() && mode != "sync" {
                     vec![format!("{}:precheck", s.name)]
                 } else {
                     vec![]
@@ -126,11 +134,18 @@ pub fn operation_dag_json(
             .filter_map(|n| n["id"].as_str().map(str::to_string))
             .collect();
         if !commit_ids.is_empty() {
-            if let Some(root) = cfg
-                .repos
-                .iter()
-                .find(|r| r.name.contains("root") || r.name == "phenix")
-            {
+            let workspace_root = cfg
+                .config_dir
+                .as_deref()
+                .unwrap_or(std::path::Path::new("."));
+            if let Some(root) = cfg.repos.iter().find(|repo| {
+                repo.resolved_path(cfg)
+                    .canonicalize()
+                    .unwrap_or_else(|_| repo.resolved_path(cfg))
+                    == workspace_root
+                        .canonicalize()
+                        .unwrap_or_else(|_| workspace_root.to_path_buf())
+            }) {
                 nodes.push(serde_json::json!({
                     "id": format!("{}:update-pins", root.name),
                     "kind": "update-pins", "repo": root.name,

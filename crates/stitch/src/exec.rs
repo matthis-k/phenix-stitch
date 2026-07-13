@@ -303,18 +303,22 @@ pub fn install_hooks_for_repo(
         });
     }
 
-    let is_root = repo_name == "phenix";
-    let _sub_path = repo_path.strip_prefix(workspace_root).unwrap_or(repo_path);
+    let canonical_repo = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let is_root = canonical_repo == canonical_root;
     let pre_commit_cmd = if is_root {
-        "nix develop .#default --command tend check --profile git-hook --staged --affected-dag"
-            .to_string()
+        "stitch verify --changed --profile git-hook --context local".to_string()
     } else {
-        "nix develop .#default --command tend check --profile git-hook --staged".to_string()
+        "tend check --profile git-hook --context local".to_string()
     };
     let pre_push_cmd = if is_root {
-        "nix develop .#default --command tend check --profile pre-push --affected-dag".to_string()
+        "stitch verify --changed --downstream --profile pre-push --context local".to_string()
     } else {
-        "nix develop .#default --command tend check --profile pre-push".to_string()
+        "tend check --profile pre-push --context local".to_string()
     };
 
     for (hook_name, hook_cmd) in [("pre-commit", pre_commit_cmd), ("pre-push", pre_push_cmd)] {
@@ -1088,119 +1092,77 @@ fn builtin_git_push(node: &ExecutionNode, _args: &serde_json::Value) -> StepResu
 }
 
 fn builtin_tend_check(node: &ExecutionNode, args: &serde_json::Value) -> StepResult {
-    let profile = args
-        .get("profile")
-        .and_then(|v| v.as_str())
-        .unwrap_or("pre-push");
-    let affected_dag = args
-        .get("affected_dag")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let mut cmd_args = vec!["check", "--profile", profile];
-    if affected_dag {
-        cmd_args.push("--affected-dag");
+    let profile = match required_tend_argument(args, "profile") {
+        Ok(value) => value,
+        Err(error) => return tend_argument_failure(node, error),
+    };
+    let context = match required_tend_argument(args, "context") {
+        Ok(value) => value,
+        Err(error) => return tend_argument_failure(node, error),
+    };
+    let base = args.get("base").and_then(serde_json::Value::as_str);
+    let head = args.get("head").and_then(serde_json::Value::as_str);
+    if base.is_some() != head.is_some() {
+        return tend_argument_failure(
+            node,
+            "tend.check requires --base and --head together".to_string(),
+        );
     }
 
-    // Try flake-resolved tend first, then fallback to ambient PATH
-    let tend_cmd = resolve_tend_command(&node.path);
-    let output = std::process::Command::new(&tend_cmd.0)
-        .args(tend_cmd.1.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
-        .args(&cmd_args)
-        .current_dir(&node.path)
-        .output();
-    match output {
-        Ok(o) => StepResult {
+    let mut command = std::process::Command::new("tend");
+    command.args(["check", "--profile", profile, "--context", context]);
+    if let (Some(base), Some(head)) = (base, head) {
+        command.args(["--base", base, "--head", head]);
+    }
+    if let Some(files) = args.get("files").and_then(serde_json::Value::as_array) {
+        for file in files {
+            let Some(file) = file.as_str().filter(|value| !value.trim().is_empty()) else {
+                return tend_argument_failure(
+                    node,
+                    "tend.check files must be non-empty strings".to_string(),
+                );
+            };
+            command.args(["--file", file]);
+        }
+    }
+
+    let step_id = format!("builtin:tend.check({profile}@{context})");
+    match command.current_dir(&node.path).output() {
+        Ok(output) => StepResult {
             node: node.name.clone(),
-            step_id: format!("builtin:tend.check({profile})"),
-            success: o.status.success(),
-            stdout: String::from_utf8_lossy(&o.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&o.stderr).to_string(),
+            step_id,
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         },
-        Err(e) => StepResult {
+        Err(error) => StepResult {
             node: node.name.clone(),
-            step_id: format!("builtin:tend.check({profile})"),
+            step_id,
             success: false,
             stdout: String::new(),
-            stderr: format!("tend check failed: {e}"),
+            stderr: format!(
+                "failed to execute tend from PATH in {}: {error}",
+                node.path.display()
+            ),
         },
     }
 }
 
-/// Resolve tend command, preferring flake-based resolution over ambient PATH.
-/// Returns (program, extra_args) where extra_args are for nix run, etc.
-fn resolve_tend_command(repo_path: &std::path::Path) -> (String, Vec<String>) {
-    // Strategy 1: try `nix run` from root flake
-    // Look for flake.nix in repo path or parent directories
-    let flake_path = find_flake_root(repo_path);
-    if let Some(fp) = flake_path {
-        // Check if nix is available
-        if std::process::Command::new("nix")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            // Try to resolve tend from the flake
-            let tend_flake_path = fp.join("#tend");
-            let check = std::process::Command::new("nix")
-                .args([
-                    "run",
-                    &tend_flake_path.to_string_lossy(),
-                    "--",
-                    "check",
-                    "--help",
-                ])
-                .current_dir(repo_path)
-                .output();
-            if check.map(|o| o.status.success()).unwrap_or(false) {
-                return (
-                    "nix".to_string(),
-                    vec![
-                        "run".to_string(),
-                        tend_flake_path.to_string_lossy().to_string(),
-                        "--".to_string(),
-                    ],
-                );
-            }
-            // Try .#default devshell
-            let check_dev = std::process::Command::new("nix")
-                .args([
-                    "develop",
-                    fp.to_string_lossy().as_ref(),
-                    "--command",
-                    "tend",
-                    "check",
-                    "--help",
-                ])
-                .current_dir(repo_path)
-                .output();
-            if check_dev.map(|o| o.status.success()).unwrap_or(false) {
-                return (
-                    "nix".to_string(),
-                    vec![
-                        "develop".to_string(),
-                        fp.to_string_lossy().to_string(),
-                        "--command".to_string(),
-                        "tend".to_string(),
-                    ],
-                );
-            }
-        }
-    }
-    // Strategy 2: ambient PATH (original behavior)
-    ("tend".to_string(), vec![])
+fn required_tend_argument<'a>(args: &'a serde_json::Value, name: &str) -> Result<&'a str, String> {
+    args.get(name)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("tend.check requires a non-empty '{name}' argument"))
 }
 
-fn find_flake_root(path: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut current = Some(path);
-    while let Some(dir) = current {
-        if dir.join("flake.nix").exists() {
-            return Some(dir.to_path_buf());
-        }
-        current = dir.parent();
+fn tend_argument_failure(node: &ExecutionNode, error: String) -> StepResult {
+    StepResult {
+        node: node.name.clone(),
+        step_id: "builtin:tend.check".to_string(),
+        success: false,
+        stdout: String::new(),
+        stderr: error,
     }
-    None
 }
 
 /// Classify dirty nodes by type of dirt

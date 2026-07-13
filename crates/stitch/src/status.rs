@@ -73,8 +73,8 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
 
     let metadata = root.join(".stitch").join("topology.json");
     let metadata = metadata.exists().then_some(metadata);
-    let graph_report =
-        graph::derive::derive_workspace_graph(root, metadata.as_deref()).map(|dag| {
+    let graph_report = graph::derive::derive_workspace_graph_from_config(cfg, metadata.as_deref())
+        .map(|dag| {
             graph::validate::validate_graph(
                 &dag,
                 &graph::validate::ValidateOptions { strict: true },
@@ -96,13 +96,30 @@ pub fn check_integration(cfg: &WorkspaceConfig) -> Result<IntegrationReport, Str
     });
 
     let tend_json = root.join(".tend.json");
+    let tend_validation = std::process::Command::new("tend")
+        .arg("--root")
+        .arg(root)
+        .arg("validate")
+        .output();
     checks.push(IntegrationCheck {
         name: "tend.config".to_string(),
-        passed: tend_json.exists(),
-        detail: if tend_json.exists() {
-            format!("Found: {}", tend_json.display())
-        } else {
-            format!("Missing: {}", tend_json.display())
+        passed: tend_json.exists()
+            && tend_validation
+                .as_ref()
+                .is_ok_and(|output| output.status.success()),
+        detail: match &tend_validation {
+            Ok(output) if output.status.success() => {
+                format!("Validated: {}", tend_json.display())
+            }
+            Ok(output) => format!(
+                "Validation failed for {}: {}",
+                tend_json.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            Err(error) => format!(
+                "Could not validate {} with Tend: {error}",
+                tend_json.display()
+            ),
         },
     });
 

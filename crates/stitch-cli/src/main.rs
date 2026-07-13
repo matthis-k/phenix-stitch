@@ -59,7 +59,8 @@ fn main() {
             json: json_output,
             no_push,
             repos,
-            run_tend,
+            profile,
+            context,
             no_verify,
         } => cmd_sync(
             mode.as_deref(),
@@ -68,7 +69,8 @@ fn main() {
             *json_output,
             *no_push,
             repos,
-            *run_tend,
+            profile,
+            context,
             *no_verify,
         ),
         Commands::Graph { command } => cmd_graph(command),
@@ -112,7 +114,11 @@ fn main() {
             dirty,
             upstream,
             downstream,
-            run_tend,
+            profile,
+            context,
+            base,
+            head,
+            files,
             dry_run,
             json,
         } => cmd_verify(
@@ -123,7 +129,11 @@ fn main() {
             *dirty,
             *upstream,
             *downstream,
-            *run_tend,
+            profile,
+            context,
+            base.as_deref(),
+            head.as_deref(),
+            files,
             *dry_run,
             *json,
         ),
@@ -355,7 +365,11 @@ fn cmd_hooks(command: &HooksCommand) -> Result<(), String> {
                     println!("  {}: no .git/hooks", repo.name);
                     continue;
                 }
-                let is_root = repo.name == "phenix";
+                let root = cfg.config_dir.as_deref().unwrap_or(Path::new("."));
+                let is_root = repo_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| repo_path.clone())
+                    == root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
                 for hook_name in &["pre-commit", "pre-push"] {
                     let hook_path = hooks_dir.join(hook_name);
                     let status = if hook_path.exists() {
@@ -370,9 +384,9 @@ fn cmd_hooks(command: &HooksCommand) -> Result<(), String> {
                     };
                     println!("  {} {}: {}", repo.name, hook_name, status);
                     if is_root {
-                        println!("    -> includes --affected-dag");
+                        println!("    -> Stitch orchestrates the workspace; Tend verifies each repository");
                     } else {
-                        println!("    -> no --affected-dag (submodule-local)");
+                        println!("    -> Tend verifies this repository directly");
                     }
                 }
             }
@@ -555,11 +569,21 @@ fn cmd_verify(
     dirty: bool,
     upstream: bool,
     downstream: bool,
-    run_tend: bool,
+    profile: &str,
+    context: &str,
+    base: Option<&str>,
+    head: Option<&str>,
+    files: &[String],
     dry_run: bool,
     json: bool,
 ) -> Result<(), String> {
     validate_single_selection(all, changed, dirty, node, nodes, true)?;
+    if profile.trim().is_empty() || context.trim().is_empty() {
+        return Err("--profile and --context must be non-empty".to_string());
+    }
+    if base.is_some() != head.is_some() {
+        return Err("--base and --head must be provided together".to_string());
+    }
     let cfg = config::find_and_load()?;
 
     let selection = if all {
@@ -574,8 +598,8 @@ fn cmd_verify(
         exec::SelectionMode::Changed
     };
 
-    let explicit_nodes = if let Some(n) = node {
-        vec![n.to_string()]
+    let explicit_nodes = if let Some(node) = node {
+        vec![node.to_string()]
     } else {
         nodes.to_vec()
     };
@@ -584,30 +608,39 @@ fn cmd_verify(
         exec::ClosureMode::Connected
     } else if upstream {
         exec::ClosureMode::Upstream
-    } else {
+    } else if downstream {
         exec::ClosureMode::Downstream
+    } else {
+        exec::ClosureMode::SelfOnly
     };
 
-    let order = exec::OrderMode::ProvidersFirst;
-
-    let mut steps = Vec::new();
-    if run_tend {
-        steps.push(exec::ExecutionStep {
-            id: "tend-check".to_string(),
-            mode: exec::ExecutionMode::ReadOnly,
-            kind: exec::StepKind::Builtin {
-                name: "tend.check".to_string(),
-                args: serde_json::json!({"profile": "pre-push"}),
-            },
-            condition: None,
-        });
+    let mut tend_args = serde_json::json!({
+        "profile": profile,
+        "context": context,
+    });
+    if let (Some(base), Some(head)) = (base, head) {
+        tend_args["base"] = serde_json::Value::String(base.to_string());
+        tend_args["head"] = serde_json::Value::String(head.to_string());
     }
+    if !files.is_empty() {
+        tend_args["files"] = serde_json::json!(files);
+    }
+
+    let steps = vec![exec::ExecutionStep {
+        id: format!("tend-{profile}-{context}"),
+        mode: exec::ExecutionMode::ReadOnly,
+        kind: exec::StepKind::Builtin {
+            name: "tend.check".to_string(),
+            args: tend_args,
+        },
+        condition: None,
+    }];
 
     let scope = exec::ExecutionScope {
         selection,
         explicit_nodes,
         closure,
-        order,
+        order: exec::OrderMode::ProvidersFirst,
     };
 
     let plan = exec::build_plan(&cfg, &scope, steps)?;
@@ -619,24 +652,27 @@ fn cmd_verify(
         }
     }
 
-    let opts = exec::RunOptions {
-        dry_run,
-        apply: false,
-        json,
-    };
-    let report = exec::run_plan(&cfg, &plan, &opts)?;
+    let report = exec::run_plan(
+        &cfg,
+        &plan,
+        &exec::RunOptions {
+            dry_run,
+            apply: false,
+            json,
+        },
+    )?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
         println!(
-            "Verify: {}/{} nodes passed, {} failed",
+            "Verify: {}/{} nodes successful, {} failed",
             report.successful_nodes, report.total_nodes, report.failed_nodes
         );
     }
 
     if report.failed_nodes > 0 {
-        return Err("Some nodes failed verification".to_string());
+        return Err("Verification failed".to_string());
     }
     Ok(())
 }
@@ -1170,8 +1206,10 @@ enum Commands {
         no_push: bool,
         #[arg(long, help = "Filter by repo names")]
         repos: Vec<String>,
-        #[arg(long, help = "Run tend checks before sync")]
-        run_tend: bool,
+        #[arg(long, default_value = "pre-push", help = "Tend verification profile")]
+        profile: String,
+        #[arg(long, default_value = "local", help = "Tend execution context")]
+        context: String,
         #[arg(long, help = "Skip pre-sync verification")]
         no_verify: bool,
     },
@@ -1231,7 +1269,7 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
         trailing_command: Vec<String>,
     },
-    /// Verify workspace (default: changed nodes + downstream + providers-first)
+    /// Verify a selected workspace scope through an explicit Tend profile and context
     Verify {
         #[arg(long, help = "Select a single node by name")]
         node: Option<String>,
@@ -1247,8 +1285,16 @@ enum Commands {
         upstream: bool,
         #[arg(long, help = "Include downstream consumers")]
         downstream: bool,
-        #[arg(long, help = "Run tend checks (default: true)")]
-        run_tend: bool,
+        #[arg(long, help = "Tend verification profile")]
+        profile: String,
+        #[arg(long, help = "Tend execution context")]
+        context: String,
+        #[arg(long, help = "Git range base passed to Tend")]
+        base: Option<String>,
+        #[arg(long, help = "Git range head passed to Tend")]
+        head: Option<String>,
+        #[arg(long = "file", help = "Explicit file passed to Tend")]
+        files: Vec<String>,
         #[arg(long, help = "Dry run (show plan, no mutations)")]
         dry_run: bool,
         #[arg(long, help = "Output as JSON")]
@@ -1842,8 +1888,9 @@ fn cmd_dag(mode: Option<&str>, split: Option<&str>, json: bool) -> Result<(), St
     let mode = mode.unwrap_or("commit");
     let split = split.unwrap_or("by-repo");
     let cfg = config::find_and_load()?;
+    let verification = (mode != "sync").then_some(("git-hook", "local"));
     let dag =
-        stitch::graph::render::operation_dag_json(&cfg, mode, split, false, mode != "sync", &[])?;
+        stitch::graph::render::operation_dag_json(&cfg, mode, split, false, verification, &[])?;
     let nodes = dag
         .get("nodes")
         .and_then(|v| v.as_array())
@@ -2312,10 +2359,16 @@ fn cmd_sync(
     json_output: bool,
     no_push: bool,
     repos: &[String],
-    run_tend: bool,
+    profile: &str,
+    context: &str,
     no_verify: bool,
 ) -> Result<(), String> {
     let mode = mode.unwrap_or("push");
+    if !no_verify && (profile.trim().is_empty() || context.trim().is_empty()) {
+        return Err(
+            "--profile and --context must be non-empty unless --no-verify is set".to_string(),
+        );
+    }
     let (update_inputs, push_outputs) = match mode {
         "pull" => (true, false),
         "push" => (false, true),
@@ -2385,14 +2438,16 @@ fn cmd_sync(
             });
         }
 
-        // Run tend checks (unless --no-verify)
-        if run_tend && !no_verify {
+        if !no_verify {
             steps.push(exec::ExecutionStep {
-                id: "tend-check".to_string(),
+                id: format!("tend-{profile}-{context}"),
                 mode: exec::ExecutionMode::ReadOnly,
                 kind: exec::StepKind::Builtin {
                     name: "tend.check".to_string(),
-                    args: serde_json::json!({"profile": "pre-push", "affected_dag": true}),
+                    args: serde_json::json!({
+                        "profile": profile,
+                        "context": context,
+                    }),
                 },
                 condition: Some(exec::StepCondition::DirectlyChanged),
             });

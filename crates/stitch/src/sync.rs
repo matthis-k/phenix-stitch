@@ -297,8 +297,8 @@ pub fn plan_commit(
                 "check".to_string(),
                 "--profile".to_string(),
                 "pre-push".to_string(),
-                "--offline".to_string(),
-                "--locked".to_string(),
+                "--context".to_string(),
+                "local".to_string(),
             ]]
         } else {
             Vec::new()
@@ -1067,15 +1067,14 @@ pub fn resume_sync(
                 }
             }
             Action::Validate { node: node_id } => {
-                // Validation is delegated to `tend plan/run`.
-                // See docs/workflows/agent-check-flow.md for the recommended workflow.
+                // Repository-local validation is delegated to Tend's explicit v2 boundary.
                 let node_path = resume_journal
                     .nodes
                     .get(node_id)
                     .map(|n| n.path.clone())
                     .unwrap_or_default();
                 let status = std::process::Command::new("tend")
-                    .args(["run", "--mode", "changed", "--phase", "verify"])
+                    .args(["check", "--profile", "pre-push", "--context", "local"])
                     .current_dir(&node_path)
                     .status()
                     .map_err(|e| format!("Failed to run tend: {}", e))?;
