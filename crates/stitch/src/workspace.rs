@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::parse_flake_lock;
 use crate::model::{RepoConfig, WorkspaceConfig};
 
 const DISCOVERY_OWNER_ENV: &str = "STITCH_DISCOVERY_OWNER";
-const DISCOVERY_REPOSITORY_REGEX_ENV: &str = "STITCH_DISCOVERY_REPOSITORY_REGEX";
+const DISCOVERY_REPOSITORY_PATTERN_ENV: &str = "STITCH_DISCOVERY_REPOSITORY_PATTERN";
 const DISCOVERY_ROOTS_ENV: &str = "STITCH_DISCOVERY_ROOTS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +22,8 @@ pub enum WorkspaceMode {
 ///
 /// Membership and dependency discovery are deliberately separate concerns:
 /// this policy selects local repositories, while each selected repository's
-/// `flake.lock` determines graph edges.
+/// `flake.lock` determines graph edges. `repository_pattern` is a shell-style
+/// glob over repository names (`*` and `?` are supported).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceDiscoveryPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,11 +152,13 @@ pub fn parse_remote_identity(remote: &str) -> Option<RemoteIdentity> {
     let path = if let Some(path) = remote.strip_prefix("github:") {
         path
     } else if let Some((_, path)) = remote.split_once(':').filter(|(prefix, _)| {
-        prefix.contains('@') && !prefix.contains('/') && !prefix.contains("\\")
+        prefix.contains('@') && !prefix.contains('/') && !prefix.contains('\\')
     }) {
         path
-    } else if let Some((_, path)) = remote.split_once("://") {
-        path.split_once('/').map(|(_, remainder)| remainder)?
+    } else if let Some((_, authority_and_path)) = remote.split_once("://") {
+        authority_and_path
+            .split_once('/')
+            .map(|(_, remainder)| remainder)?
     } else {
         remote
     };
@@ -186,7 +188,7 @@ fn resolve_discovery_policy(
         let owner = owner.trim();
         policy.owner = (!owner.is_empty()).then(|| owner.to_string());
     }
-    if let Ok(pattern) = std::env::var(DISCOVERY_REPOSITORY_REGEX_ENV) {
+    if let Ok(pattern) = std::env::var(DISCOVERY_REPOSITORY_PATTERN_ENV) {
         let pattern = pattern.trim();
         if !pattern.is_empty() {
             policy.repository_pattern = pattern.to_string();
@@ -366,8 +368,13 @@ fn discover_local_repo_path(
             return candidate;
         }
     }
-    resolve_search_root(root, policy.search_roots.first().unwrap_or(&PathBuf::from("repos")))
-        .join(repository)
+
+    let fallback_root = policy
+        .search_roots
+        .first()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("repos"));
+    resolve_search_root(root, &fallback_root).join(repository)
 }
 
 fn resolve_search_root(root: &Path, configured: &Path) -> PathBuf {
@@ -398,7 +405,7 @@ fn workspace_name(root: &Path) -> String {
 }
 
 fn default_repository_pattern() -> String {
-    ".*".to_string()
+    "*".to_string()
 }
 
 fn default_search_roots() -> Vec<PathBuf> {
@@ -407,25 +414,22 @@ fn default_search_roots() -> Vec<PathBuf> {
 
 struct RepositoryMatcher {
     owner: Option<String>,
-    repository: Regex,
+    repository_pattern: String,
 }
 
 impl RepositoryMatcher {
     fn new(policy: &WorkspaceDiscoveryPolicy) -> Result<Self, String> {
-        let repository = Regex::new(&policy.repository_pattern).map_err(|e| {
-            format!(
-                "Invalid workspace repository regex {:?}: {e}",
-                policy.repository_pattern
-            )
-        })?;
+        if policy.repository_pattern.is_empty() {
+            return Err("Workspace repository pattern must not be empty".to_string());
+        }
         Ok(Self {
             owner: policy.owner.clone(),
-            repository,
+            repository_pattern: policy.repository_pattern.clone(),
         })
     }
 
     fn matches(&self, repository: &str, identity: Option<&RemoteIdentity>) -> bool {
-        if !self.repository.is_match(repository) {
+        if !glob_matches(&self.repository_pattern, repository) {
             return false;
         }
         match (&self.owner, identity) {
@@ -434,6 +438,38 @@ impl RepositoryMatcher {
             (Some(_), None) => false,
         }
     }
+}
+
+fn glob_matches(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let value = value.as_bytes();
+    let mut previous = vec![false; value.len() + 1];
+    previous[0] = true;
+
+    for token in pattern {
+        let mut current = vec![false; value.len() + 1];
+        match token {
+            b'*' => {
+                current[0] = previous[0];
+                for index in 1..=value.len() {
+                    current[index] = previous[index] || current[index - 1];
+                }
+            }
+            b'?' => {
+                for index in 1..=value.len() {
+                    current[index] = previous[index - 1];
+                }
+            }
+            literal => {
+                for index in 1..=value.len() {
+                    current[index] = previous[index - 1] && *literal == value[index - 1];
+                }
+            }
+        }
+        previous = current;
+    }
+
+    previous[value.len()]
 }
 
 #[cfg(test)]
@@ -465,10 +501,10 @@ mod tests {
     }
 
     #[test]
-    fn repository_matcher_combines_owner_and_regex() {
+    fn repository_matcher_combines_owner_and_pattern() {
         let matcher = RepositoryMatcher::new(&WorkspaceDiscoveryPolicy {
             owner: Some("matthis-k".to_string()),
-            repository_pattern: "^phenix-[a-z-]+$".to_string(),
+            repository_pattern: "phenix-*".to_string(),
             search_roots: default_search_roots(),
         })
         .unwrap();
@@ -491,14 +527,22 @@ mod tests {
     }
 
     #[test]
-    fn invalid_repository_regex_is_rejected() {
+    fn glob_pattern_supports_star_and_question_mark() {
+        assert!(glob_matches("phenix-*", "phenix-stitch"));
+        assert!(glob_matches("phenix-????", "phenix-tend"));
+        assert!(!glob_matches("phenix-????", "phenix-stitch"));
+        assert!(!glob_matches("phenix-*", "newxos"));
+    }
+
+    #[test]
+    fn empty_repository_pattern_is_rejected() {
         let error = RepositoryMatcher::new(&WorkspaceDiscoveryPolicy {
             owner: None,
-            repository_pattern: "[".to_string(),
+            repository_pattern: String::new(),
             search_roots: default_search_roots(),
         })
         .err()
         .unwrap();
-        assert!(error.contains("Invalid workspace repository regex"));
+        assert!(error.contains("must not be empty"));
     }
 }
