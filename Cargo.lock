@@ -45,7 +45,7 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 name = "anstyle-parse"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e"
+checksum = "52ce7f38b242319f7cabaa301cce2bbd2df0b40f8d50b7545c2a78ab11e81fe4"
 dependencies = [
  "utf8parse",
 ]
@@ -86,7 +86,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 name = "bstr"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
+checksum = "5cee35f73844aa301c1f83ef0ef514167f9f741f50e3e9ee41247fc75c9becada"
 dependencies = [
  "memchr",
  "serde_core",
@@ -183,13 +183,13 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+checksum = "8770a9910e891aa450ec9cb5a7b5402bccf32b4e3387b0336d2cfb7b779422b2"
 
 [[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+checksum = "39cab71617fe16c622486840e4c83b99d4ff37a24768fa1be9ce3538ad176be7"
 dependencies = [
  "libc",
  "windows-sys",
@@ -211,19 +211,19 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+checksum = "0ce7134b9998dbf6f20e622b014db508c8e824e9cbeb9237e79e718d3c7b67a4"
 
 [[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
+checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6a23"
 
 [[package]]
 name = "futures-task"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
+checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538ad176be7"
 
 [[package]]
 name = "futures-util"
@@ -460,7 +460,7 @@ dependencies = [
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f961975363d481118bd70a53"
 
 [[package]]
 name = "same-file"
@@ -475,7 +475,7 @@ dependencies = [
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
+checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c6bbba8a8f1b4b00eea9563fd7b6"
 dependencies = [
  "serde_core",
  "serde_derive",
@@ -534,7 +534,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tend",
 ]
 
 [[package]]
@@ -555,7 +554,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stitch",
- "tend",
 ]
 
 [[package]]
@@ -586,17 +584,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "tend"
-version = "0.1.0"
-source = "git+https://github.com/matthis-k/phenix-tend#9b16fda280d93943ca550d5072d6c2fa7afb189f"
-dependencies = [
- "globset",
- "serde",
- "serde_json",
- "walkdir",
 ]
 
 [[package]]
@@ -703,7 +690,7 @@ dependencies = [
 name = "windows-implement"
 version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
+checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855bb4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -714,7 +701,7 @@ dependencies = [
 name = "windows-interface"
 version = "0.59.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
+checksum = "3f316c4a257e8d7a3b3ad51f406cc57d8fbbd04c8228d86d57233860bdd26186"
 dependencies = [
  "proc-macro2",
  "quote",
