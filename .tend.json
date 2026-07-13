@@ -107,7 +107,7 @@
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["rustfmt", "--edition", "2021", "--check"],
+            "command": ["stitch-rustfmt-check"],
             "file_args": "matched",
             "sandbox_safe": true
           }
@@ -185,7 +185,7 @@
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["nixfmt", "--check"],
+            "command": ["stitch-nixfmt-check"],
             "file_args": "matched",
             "sandbox_safe": true
           }
@@ -256,7 +256,7 @@
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["rustfmt", "--edition", "2021"],
+            "command": ["stitch-rustfmt-fix"],
             "file_args": "matched",
             "mutates": true
           }
@@ -274,7 +274,7 @@
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["statix", "fix"],
+            "command": ["stitch-statix-fix"],
             "file_args": "matched",
             "mutates": true
           }
@@ -292,7 +292,7 @@
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["nixfmt"],
+            "command": ["stitch-nixfmt-fix"],
             "file_args": "matched",
             "mutates": true
           }
