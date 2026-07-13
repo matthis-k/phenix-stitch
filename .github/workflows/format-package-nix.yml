@@ -1,0 +1,44 @@
+name: Format Package Module
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: format-package-nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          ref: refactor/explicit-tend-boundary
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply canonical Nix formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix shell nixpkgs#nixfmt -c nixfmt modules/package.nix
+          git diff --check
+
+      - name: Commit formatter output
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/format-package-nix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'style(nix): apply canonical package module formatting'
+          git push origin HEAD:refactor/explicit-tend-boundary
