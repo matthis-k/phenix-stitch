@@ -18,7 +18,7 @@ pub mod topo;
 pub mod validate;
 
 pub use canonical::{CanonicalWorkspaceGraph, CanonicalizeError};
-pub use derive::derive_workspace_graph;
+pub use derive::{derive_workspace_graph, derive_workspace_graph_from_config};
 pub use inventory::{discover_inventory, discover_inventory_from_config, WorkspaceDiscovery};
 pub use lock::parse_flake_lock;
 pub use planner::{

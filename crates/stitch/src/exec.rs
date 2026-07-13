@@ -255,7 +255,7 @@ pub(crate) fn load_canonical_graph(
     let metadata = root.join(".stitch").join("topology.json");
     let metadata = metadata.exists().then_some(metadata);
 
-    let dag = graph::derive::derive_workspace_graph(root, metadata.as_deref())
+    let dag = graph::derive::derive_workspace_graph_from_config(cfg, metadata.as_deref())
         .map_err(|e| format!("Cannot derive Stitch DAG from discovered workspace: {e}"))?;
     let report =
         graph::validate::validate_graph(&dag, &graph::validate::ValidateOptions::default());
