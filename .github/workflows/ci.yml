@@ -34,12 +34,13 @@ jobs:
           set +e
           (
             set -euxo pipefail
-            cat .github/pr2.patch.b64.* | base64 --decode > /tmp/pr2.patch
-            sha256sum /tmp/pr2.patch
+            cat .github/pr2.patch.gz.b64.* | base64 --decode > /tmp/pr2.patch.gz
+            echo 'de550d52963e6f5328ecbad02a951d80fd5e6f4fdfcb62da5d692a2de3a63640  /tmp/pr2.patch.gz' | sha256sum --check
+            gzip --decompress --stdout /tmp/pr2.patch.gz > /tmp/pr2.patch
             echo '3421cbf062f66cdab4adcda4f77528d8bbc1e2d71c69141116277fad5b43a610  /tmp/pr2.patch' | sha256sum --check
             git apply --check /tmp/pr2.patch
             git apply /tmp/pr2.patch
-            rm .github/pr2.patch.b64.*
+            rm -f .github/pr2.patch.b64.* .github/pr2.patch.gz.b64.*
             rm .github/pr2.apply
             rm .github/workflows/source-snapshot.yml
 
