@@ -1,6 +1,7 @@
 name: Repair Cargo Lock
 
 on:
+  pull_request:
   push:
     branches:
       - refactor/explicit-tend-boundary
@@ -14,6 +15,7 @@ concurrency:
 
 jobs:
   repair:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check out branch
