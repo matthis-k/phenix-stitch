@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::graph::spec::{DagGenerationStrategy, GenerationContext};
 use crate::graph::strategy::FlakeLocksStrategy;
 use crate::graph::{WorkspaceDag, WorkspaceNode};
+use crate::model::WorkspaceConfig;
 
 #[derive(Debug)]
 pub enum GraphError {
@@ -51,12 +52,22 @@ pub fn derive_workspace_graph(
     root: &Path,
     metadata: Option<&Path>,
 ) -> Result<WorkspaceDag, GraphError> {
-    let ctx = GenerationContext {
+    let context = GenerationContext {
         root: root.to_path_buf(),
-        metadata: metadata.map(|p| p.to_path_buf()),
+        metadata: metadata.map(Path::to_path_buf),
     };
     let draft = FlakeLocksStrategy
-        .generate(&ctx)
-        .map_err(|e| GraphError::Parse(e.to_string()))?;
+        .generate(&context)
+        .map_err(|error| GraphError::Parse(error.to_string()))?;
+    Ok(draft.into())
+}
+
+pub fn derive_workspace_graph_from_config(
+    config: &WorkspaceConfig,
+    metadata: Option<&Path>,
+) -> Result<WorkspaceDag, GraphError> {
+    let draft = FlakeLocksStrategy
+        .generate_from_config(config, metadata)
+        .map_err(|error| GraphError::Parse(error.to_string()))?;
     Ok(draft.into())
 }
