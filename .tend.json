@@ -59,12 +59,12 @@
         "deadnix-check",
         "nix-flake-check"
       ],
-      "contexts": ["local"]
+      "contexts": ["ci"]
     },
     "fix": {
       "phase": "fix",
-      "selection": "changed",
-      "tasks": ["rustfmt-fix", "nixfmt-fix", "statix-fix"],
+      "selection": "staged",
+      "tasks": ["rustfmt-fix", "statix-fix", "nixfmt-fix"],
       "contexts": ["local"]
     }
   },
@@ -72,6 +72,13 @@
     "local": {
       "implementation": "local",
       "allow_mutation": true,
+      "allow_interactive": false,
+      "allow_network": true,
+      "require_sandbox_safe": false
+    },
+    "ci": {
+      "implementation": "local",
+      "allow_mutation": false,
       "allow_interactive": false,
       "allow_network": true,
       "require_sandbox_safe": false
@@ -94,13 +101,14 @@
         "phase": "verify",
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs"]
+            "paths": ["crates/**/*.rs"]
           }
         },
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["cargo", "fmt", "--all", "--check"],
+            "command": ["rustfmt", "--edition", "2021", "--check"],
+            "file_args": "matched",
             "sandbox_safe": true
           }
         }
@@ -177,11 +185,8 @@
         "implementations": {
           "default": {
             "kind": "command",
-            "command": [
-              "bash",
-              "-c",
-              "find modules -name '*.nix' -print0 | xargs -0 -r nixfmt --check && find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt --check"
-            ],
+            "command": ["nixfmt", "--check"],
+            "file_args": "matched",
             "sandbox_safe": true
           }
         }
@@ -245,34 +250,14 @@
         "phase": "fix",
         "when": {
           "changed": {
-            "paths": ["Cargo.toml", "Cargo.lock", "crates/**/*.rs"]
+            "paths": ["crates/**/*.rs"]
           }
         },
         "implementations": {
           "default": {
             "kind": "command",
-            "command": ["cargo", "fmt", "--all"],
-            "mutates": true
-          }
-        }
-      },
-      {
-        "id": "nixfmt-fix",
-        "description": "Apply Nix formatting",
-        "phase": "fix",
-        "when": {
-          "changed": {
-            "paths": ["*.nix", "modules/**/*.nix"]
-          }
-        },
-        "implementations": {
-          "default": {
-            "kind": "command",
-            "command": [
-              "bash",
-              "-c",
-              "find modules -name '*.nix' -print0 | xargs -0 -r nixfmt && find . -maxdepth 1 -name '*.nix' -print0 | xargs -0 -r nixfmt"
-            ],
+            "command": ["rustfmt", "--edition", "2021"],
+            "file_args": "matched",
             "mutates": true
           }
         }
@@ -290,6 +275,25 @@
           "default": {
             "kind": "command",
             "command": ["statix", "fix"],
+            "file_args": "matched",
+            "mutates": true
+          }
+        }
+      },
+      {
+        "id": "nixfmt-fix",
+        "description": "Apply Nix formatting",
+        "phase": "fix",
+        "when": {
+          "changed": {
+            "paths": ["*.nix", "modules/**/*.nix"]
+          }
+        },
+        "implementations": {
+          "default": {
+            "kind": "command",
+            "command": ["nixfmt"],
+            "file_args": "matched",
             "mutates": true
           }
         }
