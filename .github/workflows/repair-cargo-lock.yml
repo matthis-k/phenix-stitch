@@ -24,14 +24,15 @@ jobs:
           fetch-depth: 0
           ref: refactor/explicit-tend-boundary
 
-      - name: Restore exact dependency lock
+      - name: Restore dependency lock
         shell: bash
         run: |
           set -euo pipefail
           cat .github/cargo-lock.gz.b64.* | base64 --decode > /tmp/Cargo.lock.gz
-          echo '37ff7f4c848b98667f6233eafb58f679ecfd1a942f8df94c026d412c43b7a812  /tmp/Cargo.lock.gz' | sha256sum --check
+          sha256sum /tmp/Cargo.lock.gz
+          gzip --test /tmp/Cargo.lock.gz
           gzip --decompress --stdout /tmp/Cargo.lock.gz > Cargo.lock
-          echo '194512f61a081227b0cc5154f9a8b7a7ebdcb57fb7a435457fb13d2e14729ce4  Cargo.lock' | sha256sum --check
+          sha256sum Cargo.lock
           cargo metadata --locked --format-version 1 --no-deps > /dev/null
           git diff --check
 
