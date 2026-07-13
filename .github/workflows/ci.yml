@@ -26,11 +26,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Repair MCP discovery policy construction
         shell: bash
         run: |
@@ -39,32 +34,41 @@ jobs:
           from pathlib import Path
 
           path = Path("crates/stitch-mcp/src/tools.rs")
-          text = path.read_text()
-          old = '''        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy::default();
-          policy.owner = input
-              .get("owner")
-              .and_then(|value| value.as_str())
-              .map(str::to_string);
-          '''
-          new = '''        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy {
-              owner: input
-                  .get("owner")
-                  .and_then(|value| value.as_str())
-                  .map(str::to_string),
-              ..Default::default()
-          };
-          '''
-          if old not in text:
-              raise SystemExit("expected policy construction was not found")
-          path.write_text(text.replace(old, new, 1))
+          lines = path.read_text().splitlines()
+          needle = "        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy::default();"
+          index = lines.index(needle)
+          expected = [
+              needle,
+              "        policy.owner = input",
+              '            .get("owner")',
+              "            .and_then(|value| value.as_str())",
+              "            .map(str::to_string);",
+          ]
+          if lines[index:index + len(expected)] != expected:
+              raise SystemExit("unexpected MCP policy construction")
+          replacement = [
+              "        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy {",
+              "            owner: input",
+              '                .get("owner")',
+              "                .and_then(|value| value.as_str())",
+              "                .map(str::to_string),",
+              "            ..Default::default()",
+              "        };",
+          ]
+          lines[index:index + len(expected)] = replacement
+          path.write_text("\n".join(lines) + "\n")
           PY
-          nix develop --command cargo fmt --all
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add crates/stitch-mcp/src/tools.rs
           git commit -m 'fix(mcp): initialize discovery policy structurally'
           git push origin HEAD:refactor/discovered-workspace-graph
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run deterministic checks
         id: checks
