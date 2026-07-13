@@ -26,6 +26,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref_name }}
 
+      - name: Install Nix
+        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Repair MCP discovery policy construction
         shell: bash
         run: |
@@ -60,11 +65,6 @@ jobs:
           git add crates/stitch-mcp/src/tools.rs
           git commit -m 'fix(mcp): initialize discovery policy structurally'
           git push origin HEAD:refactor/discovered-workspace-graph
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run deterministic checks
         id: checks
