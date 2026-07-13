@@ -25,13 +25,33 @@ jobs:
           ref: refactor/explicit-tend-boundary
 
       - name: Regenerate dependency lock
+        id: regenerate
         shell: bash
         run: |
-          set -euo pipefail
-          rm Cargo.lock
-          cargo generate-lockfile
-          cargo metadata --locked --format-version 1 --no-deps > /dev/null
-          git diff --check
+          set +e
+          (
+            set -euxo pipefail
+            rm Cargo.lock
+            cargo generate-lockfile
+            cargo metadata --locked --format-version 1 --no-deps > /dev/null
+            git diff --check
+          ) > cargo-lock.log 2>&1
+          status=$?
+          cat cargo-lock.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload regeneration diagnostics
+        if: always()
+        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
+        with:
+          name: cargo-lock-regeneration-diagnostics
+          path: cargo-lock.log
+          if-no-files-found: error
+
+      - name: Stop after regeneration failure
+        if: steps.regenerate.outputs.status != '0'
+        run: exit 1
 
       - name: Commit dependency lock repair
         shell: bash
