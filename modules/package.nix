@@ -23,12 +23,7 @@
         pkgs.jujutsu
       ];
 
-      cargoLock = {
-        lockFile = ../Cargo.lock;
-        outputHashes = {
-          "phenix-mcp-core-0.1.0" = "sha256-6XxX63SIZ8RgQRCvhHx1M5p1wkUAnCsDJawljTCRXIo=";
-        };
-      };
+      cargoLock.lockFile = ../Cargo.lock;
 
       stitchCliUnwrapped = pkgs.rustPlatform.buildRustPackage {
         pname = "stitch-unwrapped";
