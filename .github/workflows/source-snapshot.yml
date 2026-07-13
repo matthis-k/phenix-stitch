@@ -1,0 +1,23 @@
+name: Source Snapshot
+
+on:
+  push:
+    branches:
+      - refactor/explicit-tend-boundary
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Create source snapshot
+        run: tar --exclude=.git -czf "$RUNNER_TEMP/phenix-stitch-source.tar.gz" .
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
+        with:
+          name: phenix-stitch-source
+          path: ${{ runner.temp }}/phenix-stitch-source.tar.gz
+          if-no-files-found: error
