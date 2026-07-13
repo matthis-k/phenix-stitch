@@ -435,11 +435,13 @@ impl McpTool for StitchWorkspaceDiscoverTool {
             .and_then(|v| v.as_str())
             .unwrap_or(".");
         let root = std::path::Path::new(workspace);
-        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy::default();
-        policy.owner = input
-            .get("owner")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
+        let mut policy = stitch::workspace::WorkspaceDiscoveryPolicy {
+            owner: input
+                .get("owner")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            ..Default::default()
+        };
         if let Some(pattern) = input
             .get("repository_pattern")
             .and_then(|value| value.as_str())
