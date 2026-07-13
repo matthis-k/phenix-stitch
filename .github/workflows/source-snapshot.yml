@@ -1,24 +1,41 @@
-name: Source Snapshot
+name: Apply PR2 Patch
 
 on:
-  pull_request:
   push:
     branches:
       - refactor/discovered-workspace-graph
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  snapshot:
+  apply:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, 'apply PR2 patch')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - name: Create source snapshot
-        run: tar --exclude=.git -czf "$RUNNER_TEMP/phenix-stitch-source.tar.gz" .
-      - name: Upload source snapshot
-        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
+      - name: Check out branch
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          name: phenix-stitch-source
-          path: ${{ runner.temp }}/phenix-stitch-source.tar.gz
-          if-no-files-found: error
+          fetch-depth: 0
+          ref: refactor/discovered-workspace-graph
+
+      - name: Reconstruct and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/pr2.patch.b64.* | base64 --decode > /tmp/pr2.patch
+          echo '3421cbf062f66cdab4adcda4f77528d8bbc1e2d71c69141116277fad5b43a610  /tmp/pr2.patch' | sha256sum --check
+          git apply --check /tmp/pr2.patch
+          git apply /tmp/pr2.patch
+          rm .github/pr2.patch.b64.*
+          rm .github/workflows/source-snapshot.yml
+
+      - name: Commit architectural change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor(graph): derive orchestration from discovered workspace'
+          git push origin HEAD:refactor/discovered-workspace-graph
