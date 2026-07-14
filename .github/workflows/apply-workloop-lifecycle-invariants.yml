@@ -1,0 +1,33 @@
+name: Apply workloop lifecycle invariants
+
+on:
+  push:
+    branches:
+      - fix/workloop-lifecycle-invariants
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+      - name: Apply lifecycle patch
+        run: python3 .github/scripts/apply_workloop_lifecycle_invariants.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Commit applied patch
+        run: |
+          rm -f .github/scripts/apply_workloop_lifecycle_invariants.py
+          rm -f .github/workflows/apply-workloop-lifecycle-invariants.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: enforce workloop lifecycle invariants"
+          git push origin HEAD:fix/workloop-lifecycle-invariants
