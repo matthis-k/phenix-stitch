@@ -1,9 +1,9 @@
 name: Apply workloop lifecycle invariants
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - fix/workloop-lifecycle-invariants
 
 permissions:
   contents: write
@@ -16,134 +16,20 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
       - name: Apply lifecycle patch
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('.github/scripts/apply_workloop_lifecycle_invariants.py')
-          text = path.read_text()
-          text = text.replace(
-              '    if count != 1:\n        raise RuntimeError(f"{label}: expected one match, found {count}")\n    return text.replace(old, new, 1)',
-              '    if count < 1:\n        raise RuntimeError(f"{label}: expected a match")\n    return text.replace(old, new, 1)',
-              1,
-          )
-          path.write_text(text)
-          PY
-          set +e
-          python3 .github/scripts/apply_workloop_lifecycle_invariants.py > patch-debug.log 2>&1
-          status=$?
-          cat patch-debug.log
-          if [[ $status -ne 0 ]]; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add patch-debug.log
-            git commit -m "chore: capture lifecycle patch failure"
-            git push origin HEAD:${{ github.event.pull_request.head.ref }}
-            exit $status
-          fi
-          rm -f patch-debug.log
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          workloop_path = Path('crates/stitch/src/workloop.rs')
-          workloop = workloop_path.read_text()
-          workloop = workloop.replace(
-              '        (LoopState::Open, LoopState::InSyncDev, _) => Ok(()),\n',
-              '',
-              1,
-          )
-          workloop_path.write_text(workloop)
-
-          tools_path = Path('crates/stitch-mcp/src/tools.rs')
-          tools = tools_path.read_text()
-          tools = tools.replace(
-              '''        let checkpoint = match backend.checkpoint(&repo_path, &repo_name, message) {''',
-              '''        let detection = backend.detect(&repo_path).map_err(|e| {
-            mk_err(
-                ErrorKind::Internal,
-                &format!("Backend detection failed: {e}"),
-                &audit_id,
-            )
-        })?;
-        let vcs_backend = workloop::VcsBackend::from_backend_state(&detection.state).map_err(|e| {
-            mk_err(ErrorKind::Internal, &e, &audit_id)
-        })?;
-
-        let checkpoint = match backend.checkpoint(&repo_path, &repo_name, message) {''',
-              1,
-          )
-          tools = tools.replace('schema_version: 1,', 'schema_version: 2,', 1)
-          tools = tools.replace(
-              'backend: workloop::VcsBackend::Jj,',
-              'backend: vcs_backend.clone(),',
-              1,
-          )
-          tools = tools.replace(
-              '''                    last_evidence_id: None,
-                },
-                decisions:''',
-              '''                    last_evidence_id: None,
-                    verified_change_id: None,
-                    verified_commit_id: None,
-                },
-                candidate: None,
-                decisions:''',
-              1,
-          )
-          tools = tools.replace(
-              '''        // Add/update repo ref in wallet
-        let repo_ref =''',
-              '''        wallet.backend = vcs_backend;
-
-        // Add/update repo ref in wallet
-        let repo_ref =''',
-              1,
-          )
-          tools = tools.replace(
-              '''        wallet.updated_at = workloop::Timestamp::now();
-        wallet.revision += 1;
-''',
-              '''        wallet.invalidate_release();
-        if let Err(e) = wallet.transition(
-            workloop::LoopAction::DevSync,
-            workloop::LoopState::InSyncDev,
-        ) {
-            return Err(mk_err(ErrorKind::Conflict, &e, &audit_id));
-        }
-''',
-              1,
-          )
-          tools_path.write_text(tools)
-          PY
+        run: python3 .github/scripts/apply_workloop_followups.py
       - name: Format
         run: cargo fmt --all
       - name: Test workspace
-        shell: bash
-        run: |
-          set +e
-          cargo test --workspace > cargo-test-debug.log 2>&1
-          status=$?
-          cat cargo-test-debug.log
-          if [[ $status -ne 0 ]]; then
-            git restore crates/stitch/src/workloop.rs crates/stitch-cli/src/main.rs crates/stitch-mcp/src/tools.rs
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add cargo-test-debug.log
-            git commit -m "chore: capture lifecycle test failure"
-            git push origin HEAD:${{ github.event.pull_request.head.ref }}
-            exit $status
-          fi
-          rm -f cargo-test-debug.log
+        run: cargo test --workspace
       - name: Commit applied patch
         run: |
           rm -f .github/scripts/apply_workloop_lifecycle_invariants.py
+          rm -f .github/scripts/apply_workloop_followups.py
           rm -f .github/workflows/apply-workloop-lifecycle-invariants.yml
           rm -f patch-debug.log cargo-test-debug.log
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
           git commit -m "fix: enforce workloop lifecycle invariants"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:fix/workloop-lifecycle-invariants
