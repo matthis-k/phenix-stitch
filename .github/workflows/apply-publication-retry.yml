@@ -1,0 +1,110 @@
+name: Apply publication retry invariant
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Apply retry invariant
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise RuntimeError(f"{label}: source pattern not found")
+              return text.replace(old, new, 1)
+
+          workloop_path = Path('crates/stitch/src/workloop.rs')
+          workloop = workloop_path.read_text()
+          workloop = replace_once(
+              workloop,
+              '''        // ReleaseFixedPoint → Published
+                  (LoopState::ReleaseFixedPoint, LoopState::Published, LoopAction::Publish) => Ok(()),
+
+                  // Any → Blocked'''.replace('                  ', ''),
+              '''        // Publication can be retried after a publication-specific blocker.
+                  (LoopState::ReleaseFixedPoint, LoopState::Published, LoopAction::Publish) => Ok(()),
+                  (LoopState::Blocked, LoopState::Published, LoopAction::Publish) => Ok(()),
+
+                  // Any → Blocked'''.replace('                  ', ''),
+              'publication retry transition',
+          )
+          workloop = replace_once(
+              workloop,
+              '''        // Valid: ReleaseFixedPoint → Published
+                  assert!(validate_state_transition(
+                      &LoopState::ReleaseFixedPoint,
+                      &LoopState::Published,
+                      &LoopAction::Publish
+                  )
+                  .is_ok());'''.replace('                  ', ''),
+              '''        // Valid: ReleaseFixedPoint → Published
+                  assert!(validate_state_transition(
+                      &LoopState::ReleaseFixedPoint,
+                      &LoopState::Published,
+                      &LoopAction::Publish
+                  )
+                  .is_ok());
+
+                  // Valid: a previously blocked publication can complete on retry.
+                  assert!(validate_state_transition(
+                      &LoopState::Blocked,
+                      &LoopState::Published,
+                      &LoopAction::Publish
+                  )
+                  .is_ok());'''.replace('                  ', ''),
+              'publication retry test',
+          )
+          workloop_path.write_text(workloop)
+
+          main_path = Path('crates/stitch-cli/src/main.rs')
+          main = main_path.read_text()
+          main = replace_once(
+              main,
+              '''            if wallet.repos.is_empty() {
+                  return Err("No repositories are tracked by this wallet".to_string());
+              }
+              let targets:'''.replace('              ', ''),
+              '''            if wallet.repos.is_empty() {
+                  return Err("No repositories are tracked by this wallet".to_string());
+              }
+              let publication_retry = wallet.state == workloop::LoopState::Blocked
+                  && wallet.blockers.iter().all(|blocker| {
+                      blocker.kind
+                          == workloop::BlockerKind::PublishWouldReferenceUnpushedCommit
+                  });
+              if wallet.state != workloop::LoopState::ReleaseFixedPoint && !publication_retry {
+                  return Err(format!(
+                      "feature '{}' is not ready to publish (state: {})",
+                      feature, wallet.state
+                  ));
+              }
+              let targets:'''.replace('              ', ''),
+              'publish precondition',
+          )
+          main_path.write_text(main)
+          PY
+      - name: Format
+        run: cargo fmt --all
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Commit source changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/stitch/src/workloop.rs crates/stitch-cli/src/main.rs
+          git commit -m "fix: allow verified publication retries"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
