@@ -7,7 +7,7 @@ pub mod set_files;
 pub mod set_message;
 pub mod validate;
 
-use crate::model::{Changeset, WorkspaceConfig};
+use crate::model::Changeset;
 
 const PLAN_FILE: &str = ".stitch-plan.json";
 
@@ -142,26 +142,6 @@ pub fn clear_plan_file() -> Result<(), String> {
     let plan_p = plan_path();
     if plan_p.exists() {
         std::fs::remove_file(&plan_p).map_err(|e| format!("Failed to remove plan file: {}", e))?;
-    }
-    Ok(())
-}
-
-pub fn verify_no_newxos_mutation(_cfg: &WorkspaceConfig, cs: &Changeset) -> Result<(), String> {
-    for rp in &cs.repos {
-        if rp.path == "newxos" || rp.path.starts_with("newxos/") {
-            return Err(format!(
-                "Changeset includes '{}' which is in newxos. Stitch must not mutate newxos.",
-                rp.path
-            ));
-        }
-        for f in &rp.files {
-            if f.starts_with("newxos") || f.contains("/newxos/") {
-                return Err(format!(
-                    "Changeset file '{}' is inside newxos. Stitch must not mutate newxos.",
-                    f
-                ));
-            }
-        }
     }
     Ok(())
 }
