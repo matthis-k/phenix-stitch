@@ -1,9 +1,9 @@
 name: Apply publication retry invariant
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - fix/workloop-publication-postconditions
 
 permissions:
   contents: write
@@ -16,7 +16,6 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
       - name: Apply retry invariant
         run: |
           python3 - <<'PY'
@@ -97,4 +96,4 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add crates/stitch/src/workloop.rs crates/stitch-cli/src/main.rs
           git commit -m "fix: allow verified publication retries"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:fix/workloop-publication-postconditions
