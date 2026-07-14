@@ -1,7 +1,1 @@
-Traceback (most recent call last):
-  File "/home/runner/work/phenix-stitch/phenix-stitch/.github/scripts/apply_workloop_lifecycle_invariants.py", line 89, in <module>
-    workloop = replace_once(
-               ^^^^^^^^^^^^^
-  File "/home/runner/work/phenix-stitch/phenix-stitch/.github/scripts/apply_workloop_lifecycle_invariants.py", line 10, in replace_once
-    raise RuntimeError(f"{label}: expected one match, found {count}")
-RuntimeError: ready actions: expected one match, found 2
+retry lifecycle application after MCP transform fix
