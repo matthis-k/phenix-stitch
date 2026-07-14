@@ -44,6 +44,80 @@ jobs:
             exit $status
           fi
           rm -f patch-debug.log
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workloop_path = Path('crates/stitch/src/workloop.rs')
+          workloop = workloop_path.read_text()
+          workloop = workloop.replace(
+              '        (LoopState::Open, LoopState::InSyncDev, _) => Ok(()),\n',
+              '',
+              1,
+          )
+          workloop_path.write_text(workloop)
+
+          tools_path = Path('crates/stitch-mcp/src/tools.rs')
+          tools = tools_path.read_text()
+          tools = tools.replace(
+              '''        let checkpoint = match backend.checkpoint(&repo_path, &repo_name, message) {''',
+              '''        let detection = backend.detect(&repo_path).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("Backend detection failed: {e}"),
+                &audit_id,
+            )
+        })?;
+        let vcs_backend = workloop::VcsBackend::from_backend_state(&detection.state).map_err(|e| {
+            mk_err(ErrorKind::Internal, &e, &audit_id)
+        })?;
+
+        let checkpoint = match backend.checkpoint(&repo_path, &repo_name, message) {''',
+              1,
+          )
+          tools = tools.replace('schema_version: 1,', 'schema_version: 2,', 1)
+          tools = tools.replace(
+              'backend: workloop::VcsBackend::Jj,',
+              'backend: vcs_backend.clone(),',
+              1,
+          )
+          tools = tools.replace(
+              '''                    last_evidence_id: None,
+                },
+                decisions:''',
+              '''                    last_evidence_id: None,
+                    verified_change_id: None,
+                    verified_commit_id: None,
+                },
+                candidate: None,
+                decisions:''',
+              1,
+          )
+          tools = tools.replace(
+              '''        // Add/update repo ref in wallet
+        let repo_ref =''',
+              '''        wallet.backend = vcs_backend;
+
+        // Add/update repo ref in wallet
+        let repo_ref =''',
+              1,
+          )
+          tools = tools.replace(
+              '''        wallet.updated_at = workloop::Timestamp::now();
+        wallet.revision += 1;
+''',
+              '''        wallet.invalidate_release();
+        if let Err(e) = wallet.transition(
+            workloop::LoopAction::DevSync,
+            workloop::LoopState::InSyncDev,
+        ) {
+            return Err(mk_err(ErrorKind::Conflict, &e, &audit_id));
+        }
+''',
+              1,
+          )
+          tools_path.write_text(tools)
+          PY
       - name: Format
         run: cargo fmt --all
       - name: Test workspace
@@ -54,7 +128,7 @@ jobs:
           status=$?
           cat cargo-test-debug.log
           if [[ $status -ne 0 ]]; then
-            git restore crates/stitch/src/workloop.rs crates/stitch-cli/src/main.rs
+            git restore crates/stitch/src/workloop.rs crates/stitch-cli/src/main.rs crates/stitch-mcp/src/tools.rs
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add cargo-test-debug.log
