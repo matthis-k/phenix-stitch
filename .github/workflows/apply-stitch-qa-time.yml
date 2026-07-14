@@ -1,0 +1,31 @@
+name: Apply Stitch QA Time Hygiene
+
+on:
+  push:
+    branches:
+      - qa/time-and-test-hygiene
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - run: python3 .github/scripts/apply-stitch-qa-time.py
+      - run: rm .github/scripts/apply-stitch-qa-time.py .github/workflows/apply-stitch-qa-time.yml .qa-trigger-time
+      - run: cargo fmt --all
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Commit applied changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: use real UTC timestamps and isolated tests"
+          git push origin HEAD:qa/time-and-test-hygiene
