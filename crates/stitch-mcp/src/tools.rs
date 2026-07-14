@@ -1496,6 +1496,16 @@ impl McpTool for StitchLoopCheckpointTool {
             }
         };
 
+        let detection = backend.detect(&repo_path).map_err(|e| {
+            mk_err(
+                ErrorKind::Internal,
+                &format!("Backend detection failed: {e}"),
+                &audit_id,
+            )
+        })?;
+        let vcs_backend = workloop::VcsBackend::from_backend_state(&detection.state)
+            .map_err(|e| mk_err(ErrorKind::Internal, &e, &audit_id))?;
+
         let checkpoint = match backend.checkpoint(&repo_path, &repo_name, message) {
             Ok(cp) => cp,
             Err(e) => {
@@ -1511,10 +1521,10 @@ impl McpTool for StitchLoopCheckpointTool {
         let mut wallet = match workloop::load_wallet(workspace_root, feature) {
             Ok(w) => w,
             Err(_) => workloop::LoopWallet {
-                schema_version: 1,
+                schema_version: 2,
                 loop_id: format!("loop-{}", feature),
                 feature: feature.to_string(),
-                backend: workloop::VcsBackend::Jj,
+                backend: vcs_backend.clone(),
                 state: workloop::LoopState::DirtyDev,
                 repos: Vec::new(),
                 verification: workloop::VerificationPointer {
@@ -1523,7 +1533,10 @@ impl McpTool for StitchLoopCheckpointTool {
                     release_profile: None,
                     release_status: workloop::CheckStatus::NotRun,
                     last_evidence_id: None,
+                    verified_change_id: None,
+                    verified_commit_id: None,
                 },
+                candidate: None,
                 decisions: Vec::new(),
                 blockers: Vec::new(),
                 handoff: None,
@@ -1535,6 +1548,8 @@ impl McpTool for StitchLoopCheckpointTool {
                 revision: 1,
             },
         };
+
+        wallet.backend = vcs_backend;
 
         // Add/update repo ref in wallet
         let repo_ref = workloop::RepoLoopRef {
@@ -1556,8 +1571,13 @@ impl McpTool for StitchLoopCheckpointTool {
         } else {
             wallet.repos.push(repo_ref);
         }
-        wallet.updated_at = workloop::Timestamp::now();
-        wallet.revision += 1;
+        wallet.invalidate_release();
+        if let Err(e) = wallet.transition(
+            workloop::LoopAction::DevSync,
+            workloop::LoopState::InSyncDev,
+        ) {
+            return Err(mk_err(ErrorKind::Conflict, &e, &audit_id));
+        }
 
         if let Err(e) = workloop::save_wallet(workspace_root, &wallet) {
             return Err(mk_err(

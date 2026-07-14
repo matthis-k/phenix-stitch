@@ -21,6 +21,8 @@
 //!   └── valid transitions between Open, DirtyDev, InSyncDev, ... Published
 //! ```
 
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,10 @@ pub struct LoopWallet {
     /// Verification profile pointers — not full results.
     pub verification: VerificationPointer,
 
+    /// The exact release candidate created from the verified source identity.
+    #[serde(default)]
+    pub candidate: Option<CandidateRef>,
+
     /// Decisions recorded during this loop (for handoff / audit).
     pub decisions: Vec<Decision>,
     /// Blockers that currently prevent forward progress.
@@ -62,12 +68,50 @@ pub struct LoopWallet {
     pub revision: u64,
 }
 
+impl LoopWallet {
+    /// Apply a validated lifecycle transition and update all derived wallet metadata.
+    pub fn transition(&mut self, action: LoopAction, to: LoopState) -> Result<(), String> {
+        validate_state_transition(&self.state, &to, &action)?;
+        self.state = to;
+        self.next_valid_actions = valid_actions_for_state(&self.state);
+        self.updated_at = Timestamp::now();
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| "wallet revision overflow".to_string())?;
+        Ok(())
+    }
+
+    /// Any new development work invalidates release verification and candidate identity.
+    pub fn invalidate_release(&mut self) {
+        self.verification.release_status = CheckStatus::NotRun;
+        self.verification.last_evidence_id = None;
+        self.verification.verified_change_id = None;
+        self.verification.verified_commit_id = None;
+        self.candidate = None;
+        for repo in &mut self.repos {
+            repo.release_candidate_change_id = None;
+            repo.release_git_commit = None;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum VcsBackend {
     #[serde(rename = "jj")]
     Jj,
     #[serde(rename = "git")]
     Git,
+}
+
+impl VcsBackend {
+    pub fn from_backend_state(state: &BackendState) -> Result<Self, String> {
+        match state {
+            BackendState::JjColocated | BackendState::JjNative => Ok(Self::Jj),
+            BackendState::GitOnly => Ok(Self::Git),
+            BackendState::None => Err("no VCS backend detected".to_string()),
+        }
+    }
 }
 
 /// Which VCS backend is detected for a repo.
@@ -94,6 +138,8 @@ pub enum LoopAction {
     Handoff,
     #[serde(rename = "finalize-dry-run")]
     FinalizeDryRun,
+    #[serde(rename = "create-release-candidate")]
+    CreateReleaseCandidate,
     #[serde(rename = "finalize-apply")]
     FinalizeApply,
     #[serde(rename = "publish")]
@@ -109,6 +155,7 @@ impl std::fmt::Display for LoopAction {
             LoopAction::DevSync => write!(f, "dev-sync"),
             LoopAction::Handoff => write!(f, "handoff"),
             LoopAction::FinalizeDryRun => write!(f, "finalize-dry-run"),
+            LoopAction::CreateReleaseCandidate => write!(f, "create-release-candidate"),
             LoopAction::FinalizeApply => write!(f, "finalize-apply"),
             LoopAction::Publish => write!(f, "publish"),
             LoopAction::Abandon => write!(f, "abandon"),
@@ -170,6 +217,21 @@ pub struct VerificationPointer {
 
     /// Evidence ID from the last verification run (stored externally).
     pub last_evidence_id: Option<String>,
+    /// Exact source identity covered by the release verification.
+    #[serde(default)]
+    pub verified_change_id: Option<String>,
+    #[serde(default)]
+    pub verified_commit_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CandidateRef {
+    pub repo_name: String,
+    pub source_change_id: String,
+    pub source_commit_id: String,
+    pub change_id: String,
+    pub commit_id: String,
+    pub target_bookmark: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -308,19 +370,30 @@ pub fn validate_state_transition(
     match (from, to, action) {
         // Open → DirtyDev (edits started)
         (LoopState::Open, LoopState::DirtyDev, _) => Ok(()),
-        (LoopState::Open, LoopState::InSyncDev, _) => Ok(()),
 
-        // DirtyDev ↔ InSyncDev via dev-sync / edits
-        (LoopState::DirtyDev, LoopState::InSyncDev, LoopAction::DevSync) => Ok(()),
+        // Dev-sync establishes a fresh development fixed point and invalidates release state.
+        (
+            LoopState::Open
+            | LoopState::DirtyDev
+            | LoopState::InSyncDev
+            | LoopState::Blocked
+            | LoopState::ReadyToFinalize
+            | LoopState::ReleaseCandidate
+            | LoopState::ReleaseFixedPoint,
+            LoopState::InSyncDev,
+            LoopAction::DevSync,
+        ) => Ok(()),
         (LoopState::InSyncDev, LoopState::DirtyDev, _) => Ok(()),
 
         // InSyncDev → ReadyToFinalize (release preflight passed)
         (LoopState::InSyncDev, LoopState::ReadyToFinalize, LoopAction::FinalizeDryRun) => Ok(()),
 
-        // ReadyToFinalize → ReleaseCandidate (finalize dry-run ran)
-        (LoopState::ReadyToFinalize, LoopState::ReleaseCandidate, LoopAction::FinalizeApply) => {
-            Ok(())
-        }
+        // ReadyToFinalize → ReleaseCandidate (candidate created from verified source)
+        (
+            LoopState::ReadyToFinalize,
+            LoopState::ReleaseCandidate,
+            LoopAction::CreateReleaseCandidate,
+        ) => Ok(()),
 
         // ReleaseCandidate → ReleaseFixedPoint (strict checks converged)
         (LoopState::ReleaseCandidate, LoopState::ReleaseFixedPoint, LoopAction::FinalizeApply) => {
@@ -366,7 +439,7 @@ pub fn valid_actions_for_state(state: &LoopState) -> Vec<LoopAction> {
         ],
         LoopState::Blocked => vec![LoopAction::Handoff, LoopAction::Abandon],
         LoopState::ReadyToFinalize => vec![
-            LoopAction::FinalizeApply,
+            LoopAction::CreateReleaseCandidate,
             LoopAction::FinalizeDryRun,
             LoopAction::Handoff,
             LoopAction::Abandon,
@@ -570,10 +643,10 @@ impl JjBackend {
     }
 
     /// Resolve the `jj` binary path.
-    fn resolve_jj(&self) -> Result<&Path, String> {
+    fn resolve_jj(&self) -> Result<PathBuf, String> {
         if let Some(ref path) = self.jj_bin {
             if path.exists() {
-                return Ok(path);
+                return Ok(path.clone());
             }
             return Err(format!("jj binary not found at: {}", path.display()));
         }
@@ -582,8 +655,7 @@ impl JjBackend {
         for dir in std::env::split_paths(&paths) {
             let candidate = dir.join("jj");
             if candidate.exists() {
-                // Cache it
-                return Ok(Box::leak(Box::new(candidate)).as_path());
+                return Ok(candidate);
             }
         }
         // Try common nix locations
@@ -592,7 +664,7 @@ impl JjBackend {
             "/nix/var/nix/profiles/default/bin/jj",
         ] {
             if Path::new(candidate).exists() {
-                return Ok(Box::leak(Box::new(PathBuf::from(candidate))).as_path());
+                return Ok(PathBuf::from(candidate));
             }
         }
         Err("jj binary not found on PATH or common nix locations".to_string())
@@ -600,7 +672,7 @@ impl JjBackend {
 
     /// Run `jj` and return stdout as a trimmed string.
     fn run_jj(&self, repo: &Path, args: &[&str]) -> Result<String, String> {
-        let jj = self.resolve_jj()?.to_path_buf();
+        let jj = self.resolve_jj()?;
         let output = std::process::Command::new(&jj)
             .args(args)
             .env("JJ_EDITOR", "cat")
@@ -750,8 +822,8 @@ impl LoopBackend for JjBackend {
 
         // Create a new empty change on top of the current working copy,
         // so subsequent work starts fresh and the checkpoint is preserved.
-        let _ = self.run_jj(repo, &["new", "@"]);
-        let _ = self.run_jj(repo, &["describe", "@", "-m", message]);
+        self.run_jj(repo, &["new", "@"])?;
+        self.run_jj(repo, &["describe", "@", "-m", message])?;
 
         // Snapshot again to get the new change IDs
         let new_snap = self.snapshot(repo, name)?;
@@ -1320,24 +1392,96 @@ fn wallet_dir(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".stitch").join("loops")
 }
 
-/// Save a wallet to disk.
+fn validate_feature_id(feature: &str) -> Result<(), String> {
+    if feature.is_empty()
+        || !feature
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(format!(
+            "invalid feature id '{feature}': use ASCII letters, digits, '.', '-' or '_'"
+        ));
+    }
+    Ok(())
+}
+
+fn wallet_path(workspace_root: &Path, feature: &str) -> Result<PathBuf, String> {
+    validate_feature_id(feature)?;
+    Ok(wallet_dir(workspace_root).join(format!("{feature}-{WALLET_FILENAME}")))
+}
+
+/// Save a wallet atomically so an interrupted write cannot truncate durable state.
 pub fn save_wallet(workspace_root: &Path, wallet: &LoopWallet) -> Result<(), String> {
     let dir = wallet_dir(workspace_root);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create wallet dir: {}", e))?;
-    let path = dir.join(format!("{}-{}", wallet.feature, WALLET_FILENAME));
-    let json = serde_json::to_string_pretty(wallet)
-        .map_err(|e| format!("failed to serialize wallet: {}", e))?;
-    std::fs::write(&path, &json).map_err(|e| format!("failed to write wallet: {}", e))?;
-    Ok(())
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create wallet dir: {e}"))?;
+    let path = wallet_path(workspace_root, &wallet.feature)?;
+    let json = serde_json::to_vec_pretty(wallet)
+        .map_err(|e| format!("failed to serialize wallet: {e}"))?;
+
+    let mut temporary = None;
+    for attempt in 0..32_u32 {
+        let candidate = dir.join(format!(
+            ".{}.{}.{}.tmp",
+            wallet.loop_id,
+            std::process::id(),
+            attempt
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                temporary = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("failed to create temporary wallet: {error}")),
+        }
+    }
+
+    let (temporary_path, mut file) =
+        temporary.ok_or_else(|| "failed to allocate temporary wallet path".to_string())?;
+    let write_result = (|| -> Result<(), String> {
+        file.write_all(&json)
+            .map_err(|e| format!("failed to write temporary wallet: {e}"))?;
+        file.write_all(
+            b"
+",
+        )
+        .map_err(|e| format!("failed to terminate temporary wallet: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("failed to sync temporary wallet: {e}"))?;
+        fs::rename(&temporary_path, &path)
+            .map_err(|e| format!("failed to replace wallet atomically: {e}"))?;
+        FileSync::sync_dir(&dir)?;
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    write_result
+}
+
+struct FileSync;
+
+impl FileSync {
+    fn sync_dir(dir: &Path) -> Result<(), String> {
+        let directory = fs::File::open(dir)
+            .map_err(|e| format!("failed to open wallet directory for sync: {e}"))?;
+        directory
+            .sync_all()
+            .map_err(|e| format!("failed to sync wallet directory: {e}"))
+    }
 }
 
 /// Load a wallet from disk.
 pub fn load_wallet(workspace_root: &Path, feature: &str) -> Result<LoopWallet, String> {
-    let dir = wallet_dir(workspace_root);
-    let path = dir.join(format!("{}-{}", feature, WALLET_FILENAME));
-    let json = std::fs::read_to_string(&path)
-        .map_err(|e| format!("failed to read wallet '{}': {}", feature, e))?;
-    serde_json::from_str(&json).map_err(|e| format!("failed to parse wallet '{}': {}", feature, e))
+    let path = wallet_path(workspace_root, feature)?;
+    let json =
+        fs::read_to_string(&path).map_err(|e| format!("failed to read wallet '{feature}': {e}"))?;
+    serde_json::from_str(&json).map_err(|e| format!("failed to parse wallet '{feature}': {e}"))
 }
 
 /// List all known wallets.
@@ -1455,7 +1599,10 @@ mod tests {
                 release_profile: None,
                 release_status: CheckStatus::NotRun,
                 last_evidence_id: None,
+                verified_change_id: None,
+                verified_commit_id: None,
             },
+            candidate: None,
             decisions: vec![],
             blockers: vec![],
             handoff: None,
@@ -1979,5 +2126,51 @@ mod tests {
         // JjNative repo without remote → should fail
         assert!(!result.failed.is_empty());
         assert!(result.pushed.is_empty());
+    }
+    #[test]
+    fn transition_updates_revision_and_actions() {
+        let now = Timestamp::now();
+        let mut wallet = LoopWallet {
+            schema_version: 2,
+            loop_id: "loop-test".to_string(),
+            feature: "safe-feature".to_string(),
+            backend: VcsBackend::Git,
+            state: LoopState::Open,
+            repos: vec![],
+            verification: VerificationPointer {
+                dev_profile: None,
+                dev_status: CheckStatus::NotRun,
+                release_profile: None,
+                release_status: CheckStatus::NotRun,
+                last_evidence_id: None,
+                verified_change_id: None,
+                verified_commit_id: None,
+            },
+            candidate: None,
+            decisions: vec![],
+            blockers: vec![],
+            handoff: None,
+            next_valid_actions: valid_actions_for_state(&LoopState::Open),
+            created_at: now.clone(),
+            updated_at: now,
+            revision: 1,
+        };
+
+        wallet
+            .transition(LoopAction::DevSync, LoopState::InSyncDev)
+            .unwrap();
+        assert_eq!(wallet.state, LoopState::InSyncDev);
+        assert_eq!(wallet.revision, 2);
+        assert_eq!(
+            wallet.next_valid_actions,
+            valid_actions_for_state(&LoopState::InSyncDev)
+        );
+    }
+
+    #[test]
+    fn wallet_feature_cannot_escape_wallet_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = load_wallet(dir.path(), "../outside").unwrap_err();
+        assert!(error.contains("invalid feature id"));
     }
 }
