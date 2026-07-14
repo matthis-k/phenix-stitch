@@ -585,8 +585,64 @@ pub struct PublishRefs {
 /// Result of a publish operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishResult {
+    /// Targets whose remote branch was verified at the expected local commit.
+    /// This includes idempotent no-op publications where the remote was already current.
     pub pushed: Vec<String>,
     pub failed: Vec<(String, String)>,
+}
+
+fn git_command(repo: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .map_err(|error| format!("failed to run git {}: {error}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_remote_branch_head(repo: &Path, bookmark: &str) -> Result<Option<String>, String> {
+    let reference = format!("refs/heads/{bookmark}");
+    let output = std::process::Command::new("git")
+        .args(["ls-remote", "--heads", "origin", &reference])
+        .current_dir(repo)
+        .output()
+        .map_err(|error| format!("failed to inspect remote branch '{bookmark}': {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to inspect remote branch '{}': {}",
+            bookmark,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+fn publish_git_branch(repo: &Path, bookmark: &str) -> Result<(), String> {
+    let expected = git_command(repo, &["rev-parse", "--verify", bookmark])?;
+    if git_remote_branch_head(repo, bookmark)?.as_deref() == Some(expected.as_str()) {
+        return Ok(());
+    }
+
+    git_command(repo, &["push", "origin", bookmark])?;
+    let observed = git_remote_branch_head(repo, bookmark)?;
+    if observed.as_deref() != Some(expected.as_str()) {
+        return Err(format!(
+            "remote branch '{}' is {:?}, expected {} after push",
+            bookmark, observed, expected
+        ));
+    }
+    Ok(())
 }
 
 /// Abstract VCS backend.  Primary impl is `JjBackend`; `GitBackend`
@@ -1102,42 +1158,55 @@ impl LoopBackend for JjBackend {
         let mut failed = Vec::new();
 
         for target in &refs.targets {
-            let backend = JjBackend::new();
-            let det = backend.detect(&target.path)?;
-            match det.state {
-                BackendState::JjColocated => {
-                    // Belt-and-suspenders: export first, then git push
-                    if let Err(e) = self.run_jj(&target.path, &["git", "export"]) {
-                        failed.push((target.name.clone(), format!("jj git export failed: {}", e)));
-                        continue;
-                    }
-                    match self.run_git(&target.path, &["push", "origin", &target.bookmark]) {
-                        Ok(_) => pushed.push(target.name.clone()),
-                        Err(e) => {
-                            failed.push((target.name.clone(), format!("git push failed: {}", e)));
-                        }
-                    }
-                }
+            let result = match self.detect(&target.path)?.state {
+                BackendState::JjColocated => self
+                    .run_jj(&target.path, &["git", "export"])
+                    .map_err(|error| format!("jj git export failed: {error}"))
+                    .and_then(|_| publish_git_branch(&target.path, &target.bookmark)),
                 BackendState::JjNative => {
-                    match self.run_jj(&target.path, &["git", "push", "-r", &target.bookmark]) {
-                        Ok(_) => pushed.push(target.name.clone()),
-                        Err(e) => {
-                            failed
-                                .push((target.name.clone(), format!("jj git push failed: {}", e)));
+                    let local = self.run_jj(
+                        &target.path,
+                        &[
+                            "log",
+                            "-r",
+                            &target.bookmark,
+                            "--no-graph",
+                            "-T",
+                            "commit_id",
+                        ],
+                    );
+                    local.and_then(|expected| {
+                        let remote_rev = format!("{}@origin", target.bookmark);
+                        let already_published = self
+                            .run_jj(
+                                &target.path,
+                                &["log", "-r", &remote_rev, "--no-graph", "-T", "commit_id"],
+                            )
+                            .map(|observed| observed == expected)
+                            .unwrap_or(false);
+                        if !already_published {
+                            self.run_jj(&target.path, &["git", "push", "-r", &target.bookmark])?;
                         }
-                    }
-                }
-                BackendState::GitOnly => {
-                    match self.run_git(&target.path, &["push", "origin", &target.bookmark]) {
-                        Ok(_) => pushed.push(target.name.clone()),
-                        Err(e) => {
-                            failed.push((target.name.clone(), format!("git push failed: {}", e)));
+                        let observed = self.run_jj(
+                            &target.path,
+                            &["log", "-r", &remote_rev, "--no-graph", "-T", "commit_id"],
+                        )?;
+                        if observed != expected {
+                            return Err(format!(
+                                "remote bookmark '{}' is {}, expected {} after push",
+                                target.bookmark, observed, expected
+                            ));
                         }
-                    }
+                        Ok(())
+                    })
                 }
-                BackendState::None => {
-                    failed.push((target.name.clone(), "no VCS backend detected".to_string()));
-                }
+                BackendState::GitOnly => publish_git_branch(&target.path, &target.bookmark),
+                BackendState::None => Err("no VCS backend detected".to_string()),
+            };
+
+            match result {
+                Ok(()) => pushed.push(target.name.clone()),
+                Err(error) => failed.push((target.name.clone(), error)),
             }
         }
 
@@ -1356,9 +1425,9 @@ impl LoopBackend for GitBackend {
         let mut failed = Vec::new();
 
         for target in &refs.targets {
-            match self.run_git(&target.path, &["push", "origin", &target.bookmark]) {
-                Ok(_) => pushed.push(target.name.clone()),
-                Err(e) => failed.push((target.name.clone(), e)),
+            match publish_git_branch(&target.path, &target.bookmark) {
+                Ok(()) => pushed.push(target.name.clone()),
+                Err(error) => failed.push((target.name.clone(), error)),
             }
         }
 
@@ -2172,5 +2241,44 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let error = load_wallet(dir.path(), "../outside").unwrap_err();
         assert!(error.contains("invalid feature id"));
+    }
+    #[test]
+    fn git_publish_verifies_remote_and_is_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let repo_path = root.path().join("repo");
+        let remote_path = root.path().join("remote.git");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        init_git_repo(&repo_path);
+        std::process::Command::new("git")
+            .args(["init", "--bare", remote_path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", remote_path.to_str().unwrap()])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        let refs = PublishRefs {
+            targets: vec![PublishTarget {
+                name: "repo".to_string(),
+                path: repo_path.clone(),
+                bookmark: "main".to_string(),
+            }],
+            repos: vec![],
+            main_bookmarks: vec![],
+        };
+        let backend = GitBackend;
+        let first = backend.publish(refs.clone()).unwrap();
+        assert_eq!(first.pushed, vec!["repo"]);
+        assert!(first.failed.is_empty());
+
+        let second = backend.publish(refs).unwrap();
+        assert_eq!(second.pushed, vec!["repo"]);
+        assert!(second.failed.is_empty());
+
+        let local = git_command(&repo_path, &["rev-parse", "main"]).unwrap();
+        let remote = git_remote_branch_head(&repo_path, "main").unwrap();
+        assert_eq!(remote.as_deref(), Some(local.as_str()));
     }
 }
