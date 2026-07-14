@@ -17,13 +17,41 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-      - run: python3 .github/scripts/apply-stitch-qa-time.py
-      - run: rm .github/scripts/apply-stitch-qa-time.py .github/workflows/apply-stitch-qa-time.yml .qa-trigger-time
-      - run: cargo fmt --all
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Commit applied changes
+
+      - name: Apply and validate with persisted diagnostics
+        id: validate
+        shell: bash
         run: |
+          set +e
+          {
+            python3 .github/scripts/apply-stitch-qa-time.py
+            apply_status=$?
+            if (( apply_status != 0 )); then
+              echo "PHASE=apply"
+              exit "$apply_status"
+            fi
+            cargo fmt --all
+            cargo test --workspace
+            cargo clippy --workspace --all-targets -- -D warnings
+          } > .qa-time.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Persist failed diagnostics
+        if: ${{ steps.validate.outputs.status != '0' }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "chore: capture combined UTC repair failure"
+          git push origin HEAD:qa/time-and-test-hygiene
+          exit 1
+
+      - name: Commit validated repair
+        if: ${{ steps.validate.outputs.status == '0' }}
+        run: |
+          rm .github/scripts/apply-stitch-qa-time.py .github/workflows/apply-stitch-qa-time.yml .qa-trigger-time .qa-time.log
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
