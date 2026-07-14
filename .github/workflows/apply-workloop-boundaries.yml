@@ -1,0 +1,39 @@
+name: Apply workloop boundaries
+
+on:
+  pull_request:
+    branches:
+      - fix/workloop-publication-postconditions
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Apply source refactor
+        run: |
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/matthis-k/phenix-stitch/7799abe0653e7b345ab1545560b437a774b8a925/.github/scripts/apply_workloop_boundaries.py \
+            --output /tmp/apply-workloop-boundaries.py
+          python3 /tmp/apply-workloop-boundaries.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Commit source changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/stitch/src/workloop.rs crates/stitch/src/workloop/store.rs crates/stitch/src/workloop/transition.rs
+          git commit -m "refactor: separate workloop policy and storage"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
