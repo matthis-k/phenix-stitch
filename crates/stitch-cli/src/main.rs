@@ -1105,13 +1105,27 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
         }
         LoopCliCommand::Publish { feature } => {
             let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
+            if wallet.repos.is_empty() {
+                return Err("No repositories are tracked by this wallet".to_string());
+            }
+            let publication_retry = wallet.state == workloop::LoopState::Blocked
+                && !wallet.blockers.is_empty()
+                && wallet.blockers.iter().all(|blocker| {
+                    blocker.kind == workloop::BlockerKind::PublishWouldReferenceUnpushedCommit
+                });
+            if wallet.state != workloop::LoopState::ReleaseFixedPoint && !publication_retry {
+                return Err(format!(
+                    "feature '{}' is not ready to publish (state: {})",
+                    feature, wallet.state
+                ));
+            }
             let targets: Vec<workloop::PublishTarget> = wallet
                 .repos
                 .iter()
-                .map(|r| workloop::PublishTarget {
-                    name: r.name.clone(),
-                    path: r.path.clone(),
-                    bookmark: "main".to_string(),
+                .map(|repo| workloop::PublishTarget {
+                    name: repo.name.clone(),
+                    path: repo.path.clone(),
+                    bookmark: repo.main_bookmark.clone(),
                 })
                 .collect();
             let refs = {
@@ -1124,26 +1138,63 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
             };
             let backend = detect_backend_for_wallet(&wallet)?;
             let results = backend.publish(refs)?;
-            wallet.state = workloop::LoopState::Published;
-            wallet.updated_at = workloop::Timestamp::now();
+            for repo in &results.pushed {
+                println!("  {}: OK (remote verified)", repo);
+            }
+            for (target, message) in &results.failed {
+                println!("  {}: FAIL  {}", target, message);
+            }
+
+            if results.failed.is_empty() {
+                wallet.blockers.retain(|blocker| {
+                    blocker.kind != workloop::BlockerKind::PublishWouldReferenceUnpushedCommit
+                });
+                wallet.transition(
+                    workloop::LoopAction::Publish,
+                    workloop::LoopState::Published,
+                )?;
+                wallet.decisions.push(workloop::Decision {
+                    title: "publish".to_string(),
+                    rationale: format!(
+                        "Published and remotely verified {} repo(s)",
+                        results.pushed.len()
+                    ),
+                    outcome: workloop::DecisionOutcome::Accepted,
+                    agent_id: None,
+                    created_at: workloop::Timestamp::now(),
+                });
+                workloop::save_wallet(&workspace_root, &wallet)?;
+                return Ok(());
+            }
+
+            let failed_targets = results
+                .failed
+                .iter()
+                .map(|(target, message)| format!("{target}: {message}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            wallet.blockers.retain(|blocker| {
+                blocker.kind != workloop::BlockerKind::PublishWouldReferenceUnpushedCommit
+            });
+            wallet.blockers.push(workloop::Blocker {
+                kind: workloop::BlockerKind::PublishWouldReferenceUnpushedCommit,
+                repo: None,
+                description: format!("Publication incomplete: {failed_targets}"),
+                next_options: vec![
+                    "repair the failed remote or credentials and run loop publish again"
+                        .to_string(),
+                ],
+            });
+            wallet.transition(workloop::LoopAction::Publish, workloop::LoopState::Blocked)?;
             wallet.decisions.push(workloop::Decision {
-                title: "publish".to_string(),
-                rationale: format!("Published {} repo(s)", results.pushed.len()),
-                outcome: workloop::DecisionOutcome::Accepted,
+                title: "publish-incomplete".to_string(),
+                rationale: failed_targets,
+                outcome: workloop::DecisionOutcome::Deferred,
                 agent_id: None,
                 created_at: workloop::Timestamp::now(),
             });
             workloop::save_wallet(&workspace_root, &wallet)?;
-            for r in &results.pushed {
-                println!("  {}: OK", r);
-            }
-            for (target, msg) in &results.failed {
-                println!("  {}: FAIL  {}", target, msg);
-            }
-            if !results.failed.is_empty() {
-                return Err("Some publishes failed".to_string());
-            }
-            Ok(())
+            Err("Some publications failed remote postcondition verification".to_string())
         }
         LoopCliCommand::List { json } => {
             let wallets = workloop::list_wallets(&workspace_root)?;
