@@ -1108,6 +1108,17 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
             if wallet.repos.is_empty() {
                 return Err("No repositories are tracked by this wallet".to_string());
             }
+            let publication_retry = wallet.state == workloop::LoopState::Blocked
+                && !wallet.blockers.is_empty()
+                && wallet.blockers.iter().all(|blocker| {
+                    blocker.kind == workloop::BlockerKind::PublishWouldReferenceUnpushedCommit
+                });
+            if wallet.state != workloop::LoopState::ReleaseFixedPoint && !publication_retry {
+                return Err(format!(
+                    "feature '{}' is not ready to publish (state: {})",
+                    feature, wallet.state
+                ));
+            }
             let targets: Vec<workloop::PublishTarget> = wallet
                 .repos
                 .iter()

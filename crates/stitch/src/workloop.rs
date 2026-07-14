@@ -400,8 +400,9 @@ pub fn validate_state_transition(
             Ok(())
         }
 
-        // ReleaseFixedPoint → Published
+        // Publication can be retried after a publication-specific blocker.
         (LoopState::ReleaseFixedPoint, LoopState::Published, LoopAction::Publish) => Ok(()),
+        (LoopState::Blocked, LoopState::Published, LoopAction::Publish) => Ok(()),
 
         // Any → Blocked
         (_, LoopState::Blocked, _) => Ok(()),
@@ -1610,6 +1611,14 @@ mod tests {
         // Valid: ReleaseFixedPoint → Published
         assert!(validate_state_transition(
             &LoopState::ReleaseFixedPoint,
+            &LoopState::Published,
+            &LoopAction::Publish
+        )
+        .is_ok());
+
+        // Valid: a previously blocked publication can complete on retry.
+        assert!(validate_state_transition(
+            &LoopState::Blocked,
             &LoopState::Published,
             &LoopAction::Publish
         )
