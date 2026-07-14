@@ -866,8 +866,11 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
                 .map(|r| r.name.clone())
                 .ok_or_else(|| "No repos in wallet".to_string())?;
             let cp = backend.checkpoint(&repo_path, &repo_name, &message)?;
-            wallet.state = workloop::LoopState::InSyncDev;
-            wallet.updated_at = workloop::Timestamp::now();
+            wallet.invalidate_release();
+            wallet.transition(
+                workloop::LoopAction::DevSync,
+                workloop::LoopState::InSyncDev,
+            )?;
             wallet.decisions.push(workloop::Decision {
                 title: format!("checkpoint: {}", cp.message),
                 rationale: format!("Checkpoint created at change {}", cp.change_id),
@@ -884,41 +887,71 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
                 .clone()
                 .unwrap_or_else(|| format!("dev-sync: {}", feature));
             let backend = detect_backend_current_dir()?;
-            let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {}", e))?;
+            let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+            let detection = backend.detect(&cwd)?;
             let snapshot = backend.snapshot(&cwd, feature)?;
+            if snapshot.has_conflicts {
+                return Err("cannot dev-sync a conflicted working copy".to_string());
+            }
             let cp = backend.checkpoint(&cwd, feature, &message)?;
+            let vcs_backend = workloop::VcsBackend::from_backend_state(&detection.state)?;
+            let now = workloop::Timestamp::now();
             let mut wallet = match workloop::load_wallet(&workspace_root, feature) {
-                Ok(w) => w,
-                Err(_) => {
-                    let now = workloop::Timestamp::now();
-                    workloop::LoopWallet {
-                        schema_version: 1,
-                        loop_id: format!("loop-{}", feature),
-                        feature: feature.clone(),
-                        backend: workloop::VcsBackend::Jj,
-                        state: workloop::LoopState::Open,
-                        repos: vec![],
-                        verification: workloop::VerificationPointer {
-                            dev_profile: None,
-                            dev_status: workloop::CheckStatus::NotRun,
-                            release_profile: None,
-                            release_status: workloop::CheckStatus::NotRun,
-                            last_evidence_id: None,
-                        },
-                        decisions: vec![],
-                        blockers: vec![],
-                        handoff: None,
-                        next_valid_actions: workloop::valid_actions_for_state(
-                            &workloop::LoopState::Open,
-                        ),
-                        created_at: now.clone(),
-                        updated_at: now,
-                        revision: 1,
-                    }
-                }
+                Ok(wallet) => wallet,
+                Err(_) => workloop::LoopWallet {
+                    schema_version: 2,
+                    loop_id: format!("loop-{}", feature),
+                    feature: feature.clone(),
+                    backend: vcs_backend.clone(),
+                    state: workloop::LoopState::Open,
+                    repos: vec![],
+                    verification: workloop::VerificationPointer {
+                        dev_profile: None,
+                        dev_status: workloop::CheckStatus::NotRun,
+                        release_profile: None,
+                        release_status: workloop::CheckStatus::NotRun,
+                        last_evidence_id: None,
+                        verified_change_id: None,
+                        verified_commit_id: None,
+                    },
+                    candidate: None,
+                    decisions: vec![],
+                    blockers: vec![],
+                    handoff: None,
+                    next_valid_actions: workloop::valid_actions_for_state(
+                        &workloop::LoopState::Open,
+                    ),
+                    created_at: now.clone(),
+                    updated_at: now,
+                    revision: 1,
+                },
             };
-            wallet.state = workloop::LoopState::InSyncDev;
-            wallet.updated_at = workloop::Timestamp::now();
+
+            wallet.backend = vcs_backend;
+            let repo_ref = workloop::RepoLoopRef {
+                name: feature.clone(),
+                path: cwd,
+                workspace: None,
+                base_operation_id: snapshot.operation_id.clone(),
+                current_operation_id: cp.operation_id.clone(),
+                working_copy_change_id: cp.change_id.clone(),
+                working_copy_commit_id: snapshot.commit_id.clone(),
+                main_bookmark: snapshot.main_bookmark.clone(),
+                feature_bookmark: None,
+                release_candidate_change_id: None,
+                exported_git_commit: None,
+                release_git_commit: None,
+            };
+            if let Some(existing) = wallet.repos.iter_mut().find(|repo| repo.name == *feature) {
+                *existing = repo_ref;
+            } else {
+                wallet.repos.push(repo_ref);
+            }
+            wallet.invalidate_release();
+            wallet.transition(
+                workloop::LoopAction::DevSync,
+                workloop::LoopState::InSyncDev,
+            )?;
             wallet.decisions.push(workloop::Decision {
                 title: format!("dev-sync: {}", cp.message),
                 rationale: format!("Dev-sync at change {}", cp.change_id),
@@ -927,35 +960,58 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
                 created_at: workloop::Timestamp::now(),
             });
             workloop::save_wallet(&workspace_root, &wallet)?;
-            if snapshot.has_conflicts {
-                println!("WARNING: conflicts detected");
-            }
             println!("Dev-sync for '{}': snapshot + checkpoint done", feature);
             Ok(())
         }
         LoopCliCommand::CreateRc { feature, target } => {
             let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
+            if wallet.state != workloop::LoopState::ReadyToFinalize {
+                return Err(format!(
+                    "feature '{}' must pass finalize-dry-run before creating a release candidate",
+                    feature
+                ));
+            }
             let backend = detect_backend_for_wallet(&wallet)?;
-            let repo_path = wallet
+            let repo = wallet
                 .repos
                 .first()
-                .map(|r| r.path.clone())
+                .cloned()
                 .ok_or_else(|| "No repos in wallet".to_string())?;
-            let repo_name = wallet
-                .repos
-                .first()
-                .map(|r| r.name.clone())
-                .ok_or_else(|| "No repos in wallet".to_string())?;
-            let change = backend.current_change(&repo_path, &repo_name)?;
+            let change = backend.current_change(&repo.path, &repo.name)?;
+            if wallet.verification.verified_change_id.as_deref() != Some(change.change_id.as_str())
+                || wallet.verification.verified_commit_id.as_deref()
+                    != Some(change.commit_id.as_str())
+            {
+                return Err(
+                    "working copy changed after release verification; run finalize-dry-run again"
+                        .to_string(),
+                );
+            }
+            let target_bookmark = target.clone().unwrap_or_else(|| "main".to_string());
+            let source_change_id = change.change_id.clone();
+            let source_commit_id = change.commit_id.clone();
             let input = workloop::ReleaseInput {
-                repo_name: repo_name.clone(),
-                source_change_id: change.change_id,
-                target_bookmark: target.clone().unwrap_or_else(|| "main".to_string()),
+                repo_name: repo.name.clone(),
+                source_change_id: source_change_id.clone(),
+                target_bookmark: target_bookmark.clone(),
                 squash_message: None,
             };
-            let rc = backend.create_release_candidate(&repo_path, input)?;
-            wallet.state = workloop::LoopState::ReleaseCandidate;
-            wallet.updated_at = workloop::Timestamp::now();
+            let rc = backend.create_release_candidate(&repo.path, input)?;
+            wallet.candidate = Some(workloop::CandidateRef {
+                repo_name: repo.name.clone(),
+                source_change_id,
+                source_commit_id,
+                change_id: rc.change_id.clone(),
+                commit_id: rc.commit_id.clone(),
+                target_bookmark,
+            });
+            if let Some(repo) = wallet.repos.first_mut() {
+                repo.release_candidate_change_id = Some(rc.change_id.clone());
+            }
+            wallet.transition(
+                workloop::LoopAction::CreateReleaseCandidate,
+                workloop::LoopState::ReleaseCandidate,
+            )?;
             wallet.decisions.push(workloop::Decision {
                 title: format!("create-rc: {}", rc.commit_id),
                 rationale: format!("Release candidate created for '{}'", feature),
@@ -968,21 +1024,37 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
             Ok(())
         }
         LoopCliCommand::FinalizeDryRun { feature } => {
-            let wallet = workloop::load_wallet(&workspace_root, feature)?;
+            let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
             let backend = detect_backend_for_wallet(&wallet)?;
-            let repo_path = wallet
+            let repo = wallet
                 .repos
                 .first()
-                .map(|r| r.path.clone())
+                .cloned()
                 .ok_or_else(|| "No repos in wallet".to_string())?;
-            let repo_name = wallet
-                .repos
-                .first()
-                .map(|r| r.name.clone())
-                .ok_or_else(|| "No repos in wallet".to_string())?;
-            let snapshot = backend.snapshot(&repo_path, &repo_name)?;
-            println!("Finalize dry-run for '{}': checks passed", feature);
-            println!("  Current commit: {}", snapshot.commit_id);
+            let snapshot = backend.snapshot(&repo.path, &repo.name)?;
+            if snapshot.has_conflicts || snapshot.has_divergence || snapshot.working_copy_is_stale {
+                return Err(
+                    "release preflight rejected conflicted, divergent, or stale state".to_string(),
+                );
+            }
+            run_release_verification(&repo.path)?;
+            wallet.verification.release_profile = Some("full".to_string());
+            wallet.verification.release_status = workloop::CheckStatus::Passed;
+            wallet.verification.last_evidence_id =
+                Some(format!("tend:full:{}", snapshot.commit_id));
+            wallet.verification.verified_change_id = Some(snapshot.change_id.clone());
+            wallet.verification.verified_commit_id = Some(snapshot.commit_id.clone());
+            wallet.candidate = None;
+            wallet.transition(
+                workloop::LoopAction::FinalizeDryRun,
+                workloop::LoopState::ReadyToFinalize,
+            )?;
+            workloop::save_wallet(&workspace_root, &wallet)?;
+            println!(
+                "Finalize dry-run for '{}': Tend full profile passed",
+                feature
+            );
+            println!("  Verified commit: {}", snapshot.commit_id);
             Ok(())
         }
         LoopCliCommand::FinalizeApply { feature, apply } => {
@@ -990,31 +1062,39 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
                 return Err("Must use --apply to finalize".to_string());
             }
             let mut wallet = workloop::load_wallet(&workspace_root, feature)?;
-            let backend = detect_backend_for_wallet(&wallet)?;
-            let repo_path = wallet
+            let candidate_ref = wallet
+                .candidate
+                .clone()
+                .ok_or_else(|| "No release candidate recorded in wallet".to_string())?;
+            let repo = wallet
                 .repos
-                .first()
-                .map(|r| r.path.clone())
-                .ok_or_else(|| "No repos in wallet".to_string())?;
-            let repo_name = wallet
-                .repos
-                .first()
-                .map(|r| r.name.clone())
-                .ok_or_else(|| "No repos in wallet".to_string())?;
-            let change = backend.current_change(&repo_path, &repo_name)?;
+                .iter()
+                .find(|repo| repo.name == candidate_ref.repo_name)
+                .cloned()
+                .ok_or_else(|| "candidate repository is not tracked by wallet".to_string())?;
+            let backend = workloop::detect_backend(&repo.path)?;
             let candidate = workloop::ReleaseCandidate {
-                repo_name: repo_name.clone(),
-                change_id: change.change_id.clone(),
-                commit_id: change.commit_id.clone(),
-                exportable_git_commit_id: None,
-                checks_status: workloop::CheckStatus::NotRun,
+                repo_name: candidate_ref.repo_name.clone(),
+                change_id: candidate_ref.change_id.clone(),
+                commit_id: candidate_ref.commit_id.clone(),
+                exportable_git_commit_id: Some(candidate_ref.commit_id.clone()),
+                checks_status: workloop::CheckStatus::Passed,
             };
-            let commit = backend.finalize_candidate(&repo_path, candidate)?;
-            wallet.state = workloop::LoopState::ReleaseFixedPoint;
-            wallet.updated_at = workloop::Timestamp::now();
+            let commit = backend.finalize_candidate(&repo.path, candidate)?;
+            if let Some(repo) = wallet
+                .repos
+                .iter_mut()
+                .find(|repo| repo.name == candidate_ref.repo_name)
+            {
+                repo.release_git_commit = commit.git_commit_id.clone();
+            }
+            wallet.transition(
+                workloop::LoopAction::FinalizeApply,
+                workloop::LoopState::ReleaseFixedPoint,
+            )?;
             wallet.decisions.push(workloop::Decision {
                 title: format!("finalize: {}", commit.commit_id),
-                rationale: "Release finalized".to_string(),
+                rationale: "Verified release candidate finalized".to_string(),
                 outcome: workloop::DecisionOutcome::Accepted,
                 agent_id: None,
                 created_at: workloop::Timestamp::now(),
@@ -1078,6 +1158,28 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn run_release_verification(repo: &Path) -> Result<(), String> {
+    let output = std::process::Command::new("tend")
+        .args(["check", "--profile", "full", "--context", "local"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| format!("failed to run Tend release verification: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(format!(
+        "Tend full profile failed:\n{}{}",
+        stdout.trim(),
+        if stderr.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\n{}", stderr.trim())
+        }
+    ))
 }
 
 /// Helper: detect backend for the current directory (for dev-sync)
