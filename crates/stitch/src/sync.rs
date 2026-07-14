@@ -230,57 +230,6 @@ fn rand_byte() -> u32 {
     t & 0xFFFF
 }
 
-fn timestamp_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-    let y = 1970_f64 + (days as f64 - 1.0) / 365.25;
-    let year = y as u64;
-    let remaining = days - ((year - 1970) * 365 + (year - 1969) / 4);
-    let month_days = [
-        31,
-        if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
-            29
-        } else {
-            28
-        },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut month = 1;
-    let mut day = remaining;
-    for &md in &month_days {
-        if day <= md {
-            break;
-        }
-        day -= md;
-        month += 1;
-    }
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year,
-        month,
-        day + 1,
-        hours,
-        minutes,
-        seconds
-    )
-}
-
 fn default_message(node_name: &str, sha: Option<&str>) -> String {
     match sha {
         Some(s) => format!(
@@ -521,7 +470,7 @@ fn execute_plan(
 ) -> Result<ActionResult, String> {
     let mut journal = TransactionJournal {
         transaction_id: plan.transaction_id.clone(),
-        started_at: timestamp_now(),
+        started_at: crate::time::utc_timestamp(),
         root: plan.root.clone(),
         phase: JournalPhase::Planned,
         nodes: BTreeMap::new(),

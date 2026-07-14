@@ -138,26 +138,25 @@ mod tests {
 
     #[test]
     fn test_validate_no_message_for_commit_action() {
-        let dir = std::env::temp_dir().join("__stitch_test_git_repo__");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path();
         std::process::Command::new("git")
             .args(["init"])
-            .current_dir(&dir)
+            .current_dir(repo_path)
             .output()
             .unwrap();
         std::process::Command::new("git")
             .args(["config", "user.email", "test@test"])
-            .current_dir(&dir)
+            .current_dir(repo_path)
             .output()
             .unwrap();
         std::process::Command::new("git")
             .args(["config", "user.name", "test"])
-            .current_dir(&dir)
+            .current_dir(repo_path)
             .output()
             .unwrap();
 
-        let path_str = dir.to_string_lossy().to_string();
+        let path_str = repo_path.to_string_lossy().to_string();
         let cfg = WorkspaceConfig {
             version: 1,
             workspace: "test".to_string(),
@@ -189,18 +188,23 @@ mod tests {
         };
 
         let errors = validate_changeset(&cfg, &cs).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(errors.iter().any(|e| e.contains("no message")));
     }
 
     #[test]
     fn test_validate_non_existent_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_path = dir
+            .path()
+            .join("missing-repo")
+            .to_string_lossy()
+            .to_string();
         let cfg = WorkspaceConfig {
             version: 1,
             workspace: "test".to_string(),
             repos: vec![RepoConfig {
                 name: "ghost-repo".to_string(),
-                path: "/tmp/__stitch_test_ghost__".to_string(),
+                path: missing_path.clone(),
                 remote: None,
             }],
             config_dir: None,
@@ -214,7 +218,7 @@ mod tests {
             state: ChangesetState::Planned,
             repos: vec![RepoPlan {
                 name: "ghost-repo".to_string(),
-                path: "/tmp/__stitch_test_ghost__".to_string(),
+                path: missing_path,
                 action: Some("commit".to_string()),
                 message: Some("test".to_string()),
                 message_source: "human".to_string(),
