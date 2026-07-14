@@ -530,7 +530,7 @@ mod tests {
         assert!(glob_matches("phenix-*", "phenix-stitch"));
         assert!(glob_matches("phenix-????", "phenix-tend"));
         assert!(!glob_matches("phenix-????", "phenix-stitch"));
-        assert!(!glob_matches("phenix-*", "newxos"));
+        assert!(!glob_matches("phenix-*", "other-product"));
     }
 
     #[test]
