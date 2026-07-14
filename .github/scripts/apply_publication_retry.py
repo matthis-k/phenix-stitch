@@ -1,0 +1,68 @@
+import re
+from pathlib import Path
+
+
+def regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise RuntimeError(f"{label}: expected one match, found {count}")
+    return updated
+
+
+workloop_path = Path("crates/stitch/src/workloop.rs")
+workloop = workloop_path.read_text()
+workloop = regex_once(
+    workloop,
+    r"^        // ReleaseFixedPoint → Published\n"
+    r"^        \(LoopState::ReleaseFixedPoint, LoopState::Published, LoopAction::Publish\) => Ok\(\(\)\),$",
+    '''        // Publication can be retried after a publication-specific blocker.
+        (LoopState::ReleaseFixedPoint, LoopState::Published, LoopAction::Publish) => Ok(()),
+        (LoopState::Blocked, LoopState::Published, LoopAction::Publish) => Ok(()),''',
+    "publication retry transition",
+)
+workloop = regex_once(
+    workloop,
+    r"(^        // Valid: ReleaseFixedPoint → Published\n"
+    r"^        assert!\(validate_state_transition\(\n"
+    r"^            &LoopState::ReleaseFixedPoint,\n"
+    r"^            &LoopState::Published,\n"
+    r"^            &LoopAction::Publish\n"
+    r"^        \)\n"
+    r"^        \.is_ok\(\)\);)",
+    r'''\1
+
+        // Valid: a previously blocked publication can complete on retry.
+        assert!(validate_state_transition(
+            &LoopState::Blocked,
+            &LoopState::Published,
+            &LoopAction::Publish
+        )
+        .is_ok());''',
+    "publication retry test",
+)
+workloop_path.write_text(workloop)
+
+main_path = Path("crates/stitch-cli/src/main.rs")
+main = main_path.read_text()
+main = regex_once(
+    main,
+    r"(^            if wallet\.repos\.is_empty\(\) \{\n"
+    r"^                return Err\(\"No repositories are tracked by this wallet\"\.to_string\(\)\);\n"
+    r"^            \}\n)"
+    r"(^            let targets: Vec<workloop::PublishTarget> = wallet$)",
+    r'''\1            let publication_retry = wallet.state == workloop::LoopState::Blocked
+                && !wallet.blockers.is_empty()
+                && wallet.blockers.iter().all(|blocker| {
+                    blocker.kind
+                        == workloop::BlockerKind::PublishWouldReferenceUnpushedCommit
+                });
+            if wallet.state != workloop::LoopState::ReleaseFixedPoint && !publication_retry {
+                return Err(format!(
+                    "feature '{}' is not ready to publish (state: {})",
+                    feature, wallet.state
+                ));
+            }
+\2''',
+    "publish precondition",
+)
+main_path.write_text(main)
