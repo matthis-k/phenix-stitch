@@ -2083,7 +2083,7 @@ mod tests {
                 steps: vec![exec::ExecutionStep {
                     id: "emit".to_string(),
                     mode: exec::ExecutionMode::ReadOnly,
-                    kind: exec::StepKind::Shell {
+                    kind: exec::StepKind::Command {
                         argv: vec![
                             "sh".to_string(),
                             "-c".to_string(),
