@@ -22,7 +22,6 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -405,63 +404,13 @@ pub struct Handoff {
 // Timestamp helper
 // ---------------------------------------------------------------------------
 
-/// Simple RFC-3339-like timestamp without external deps.
+/// RFC 3339 UTC timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Timestamp(String);
 
 impl Timestamp {
     pub fn now() -> Self {
-        let secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        // Crude but deterministic ISO-like format
-        let days = secs / 86400;
-        let time_secs = secs % 86400;
-        let hours = time_secs / 3600;
-        let mins = (time_secs % 3600) / 60;
-        let secs = time_secs % 60;
-
-        let y = 1970_f64 + (days as f64) / 365.25;
-        let year = y as u64;
-        let remaining = days as i64 - ((year - 1970) as i64 * 365 + (year - 1969) as i64 / 4);
-        let mut rem = if remaining < 0 { 0 } else { remaining as u64 };
-        let month_days = [
-            31,
-            if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
-                29
-            } else {
-                28
-            },
-            31,
-            30,
-            31,
-            30,
-            31,
-            31,
-            30,
-            31,
-            30,
-            31,
-        ];
-        let mut month = 1u64;
-        for &md in &month_days {
-            if rem <= md || month >= 12 {
-                if rem > md {
-                    rem -= md;
-                    month += 1;
-                }
-                break;
-            }
-            rem -= md;
-            month += 1;
-        }
-        let day = if rem == 0 { 1 } else { rem };
-
-        Timestamp(format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-            year, month, day, hours, mins, secs
-        ))
+        Self(crate::time::utc_timestamp())
     }
 }
 

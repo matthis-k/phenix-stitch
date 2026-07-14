@@ -136,51 +136,9 @@ pub struct RepoStatus {
 }
 
 pub fn generate_changeset_id(title: &str) -> String {
-    let today = chrono_now();
+    let today = crate::time::utc_date();
     let slug = slugify(title);
     format!("{}-{}", today, slug)
-}
-
-fn chrono_now() -> String {
-    // Simple date string without external chrono dep
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    // Crude date calculation (enough for YYYY-MM-DD)
-    let days = secs / 86400;
-    let y = 1970_f64 + (days as f64 - 1.0) / 365.25;
-    let year = y as u64;
-    let remaining = days - ((year - 1970) * 365 + (year - 1969) / 4);
-    let month_days = [
-        31,
-        if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
-            29
-        } else {
-            28
-        },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut month = 1;
-    let mut day = remaining;
-    for &md in &month_days {
-        if day <= md {
-            break;
-        }
-        day -= md;
-        month += 1;
-    }
-    format!("{:04}-{:02}-{:02}", year, month, day)
 }
 
 fn slugify(s: &str) -> String {

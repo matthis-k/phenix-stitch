@@ -7,6 +7,7 @@ pub mod model;
 pub mod recipe;
 pub mod status;
 pub mod sync;
+pub(crate) mod time;
 pub mod validate;
 pub mod workloop;
 pub mod workspace;
