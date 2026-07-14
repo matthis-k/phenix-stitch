@@ -51,9 +51,8 @@ pub struct ExecutionScope {
 
 #[derive(Debug, Clone)]
 pub enum StepKind {
-    Shell {
-        argv: Vec<String>,
-    },
+    /// Execute an argv vector directly with `Command`; no shell is involved.
+    Command { argv: Vec<String> },
     Builtin {
         name: String,
         args: serde_json::Value,
@@ -77,6 +76,27 @@ pub enum StepCondition {
     DownstreamOnly,
     HasLockfile,
     HasChangedInputs,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StepFacts {
+    dirty: bool,
+    staged: bool,
+    has_lockfile: bool,
+}
+
+impl StepCondition {
+    fn matches(self, node: &ExecutionNode, facts: StepFacts) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Dirty => facts.dirty,
+            Self::Staged => facts.staged,
+            Self::DirectlyChanged => node.directly_changed,
+            Self::DownstreamOnly => node.downstream_only,
+            Self::HasLockfile => facts.has_lockfile,
+            Self::HasChangedInputs => node.downstream_only && facts.has_lockfile,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -645,23 +665,18 @@ pub fn build_plan(
     let mut nodes = build_scope(cfg, scope)?;
 
     for node in &mut nodes {
-        let is_dirty = is_node_dirty(&node.path);
-        let is_staged = is_staged_check(&node.path);
-        let has_lock = has_lockfile(&node.path);
+        let facts = StepFacts {
+            dirty: is_node_dirty(&node.path),
+            staged: is_node_staged(&node.path),
+            has_lockfile: has_lockfile(&node.path),
+        };
 
         let applicable: Vec<ExecutionStep> = steps
             .iter()
             .filter(|step| {
-                let cond = step.condition.unwrap_or(StepCondition::Always);
-                match cond {
-                    StepCondition::Always => true,
-                    StepCondition::Dirty => is_dirty,
-                    StepCondition::Staged => is_staged,
-                    StepCondition::DirectlyChanged => node.directly_changed,
-                    StepCondition::DownstreamOnly => node.downstream_only,
-                    StepCondition::HasLockfile => has_lock,
-                    StepCondition::HasChangedInputs => node.downstream_only && has_lock,
-                }
+                step.condition
+                    .unwrap_or(StepCondition::Always)
+                    .matches(node, facts)
             })
             .cloned()
             .collect();
@@ -670,10 +685,6 @@ pub fn build_plan(
     }
 
     Ok(ExecutionPlan { nodes })
-}
-
-fn is_staged_check(path: &Path) -> bool {
-    is_node_staged(path)
 }
 
 pub fn run_plan(
@@ -727,7 +738,7 @@ pub fn run_plan(
                 println!("[dry-run] {}:", node.name);
                 for step in &node.steps {
                     match &step.kind {
-                        StepKind::Shell { argv } => {
+                        StepKind::Command { argv } => {
                             println!("  {}: {}", step.id, argv.join(" "));
                         }
                         StepKind::Builtin { name, args } => {
@@ -786,14 +797,14 @@ pub fn run_plan(
 
 fn execute_step(node: &ExecutionNode, step: &ExecutionStep, cfg: &WorkspaceConfig) -> StepResult {
     match &step.kind {
-        StepKind::Shell { argv } => {
+        StepKind::Command { argv } => {
             if argv.is_empty() {
                 return StepResult {
                     node: node.name.clone(),
                     step_id: step.id.clone(),
                     success: false,
                     stdout: String::new(),
-                    stderr: "Shell step has empty argv; provide a program or shell command"
+                    stderr: "Command step has empty argv; provide a program and arguments"
                         .to_string(),
                 };
             }
@@ -1457,7 +1468,7 @@ pub fn print_plan(plan: &ExecutionPlan, json: bool) {
                     "downstream_only": n.downstream_only,
                     "steps": n.steps.iter().map(|s| {
                         let kind_str = match &s.kind {
-                            StepKind::Shell { argv } => serde_json::json!({"shell": argv}),
+                            StepKind::Command { argv } => serde_json::json!({"shell": argv}),
                             StepKind::Builtin { name, args } => serde_json::json!({"builtin": name, "args": args}),
                         };
                         serde_json::json!({
@@ -1505,7 +1516,7 @@ pub fn print_plan(plan: &ExecutionPlan, json: bool) {
                         ExecutionMode::ReadOnly => "",
                     };
                     match &step.kind {
-                        StepKind::Shell { argv } => {
+                        StepKind::Command { argv } => {
                             println!("    step: {}: {}{mode_str}", step.id, argv.join(" "));
                         }
                         StepKind::Builtin { name, .. } => {
@@ -1787,7 +1798,7 @@ mod tests {
         let step = ExecutionStep {
             id: "empty".to_string(),
             mode: ExecutionMode::ReadOnly,
-            kind: StepKind::Shell { argv: vec![] },
+            kind: StepKind::Command { argv: vec![] },
             condition: None,
         };
         let result = execute_step(&node, &step, &make_test_cfg());
@@ -1806,7 +1817,7 @@ mod tests {
         let steps = vec![ExecutionStep {
             id: "mutate".to_string(),
             mode: ExecutionMode::Mutating,
-            kind: StepKind::Shell {
+            kind: StepKind::Command {
                 argv: vec!["echo".to_string(), "hi".to_string()],
             },
             condition: None,
@@ -1837,7 +1848,7 @@ mod tests {
         let steps = vec![ExecutionStep {
             id: "mutate".to_string(),
             mode: ExecutionMode::Mutating,
-            kind: StepKind::Shell {
+            kind: StepKind::Command {
                 argv: vec!["echo".to_string(), "hi".to_string()],
             },
             condition: None,
@@ -1864,7 +1875,7 @@ mod tests {
         let steps = vec![ExecutionStep {
             id: "read".to_string(),
             mode: ExecutionMode::ReadOnly,
-            kind: StepKind::Shell {
+            kind: StepKind::Command {
                 argv: vec!["echo".to_string(), "read".to_string()],
             },
             condition: None,
@@ -2102,7 +2113,7 @@ mod tests {
         let steps = vec![ExecutionStep {
             id: "always-step".to_string(),
             mode: ExecutionMode::ReadOnly,
-            kind: StepKind::Shell {
+            kind: StepKind::Command {
                 argv: vec!["echo".to_string(), "always".to_string()],
             },
             condition: Some(StepCondition::Always),
@@ -2131,7 +2142,7 @@ mod tests {
         let steps = vec![ExecutionStep {
             id: "test".to_string(),
             mode: ExecutionMode::ReadOnly,
-            kind: StepKind::Shell {
+            kind: StepKind::Command {
                 argv: vec!["echo".to_string(), "hello".to_string()],
             },
             condition: None,
@@ -2147,5 +2158,41 @@ mod tests {
         assert_eq!(report.total_nodes, 1);
         assert_eq!(report.successful_nodes, 1);
         assert_eq!(report.failed_nodes, 0);
+    }
+}
+
+#[cfg(test)]
+mod condition_tests {
+    use super::*;
+
+    fn node() -> ExecutionNode {
+        ExecutionNode {
+            name: "consumer".to_string(),
+            path: PathBuf::from("."),
+            role: None,
+            layer: 3,
+            directly_selected: false,
+            directly_changed: true,
+            downstream_only: true,
+            steps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn named_step_predicates_express_domain_conditions() {
+        let node = node();
+        let facts = StepFacts {
+            dirty: false,
+            staged: true,
+            has_lockfile: true,
+        };
+
+        assert!(StepCondition::Always.matches(&node, facts));
+        assert!(!StepCondition::Dirty.matches(&node, facts));
+        assert!(StepCondition::Staged.matches(&node, facts));
+        assert!(StepCondition::DirectlyChanged.matches(&node, facts));
+        assert!(StepCondition::DownstreamOnly.matches(&node, facts));
+        assert!(StepCondition::HasLockfile.matches(&node, facts));
+        assert!(StepCondition::HasChangedInputs.matches(&node, facts));
     }
 }

@@ -109,7 +109,7 @@ pub fn resolve_recipe(recipe: &RecipeDef) -> Result<RecipeResolved, String> {
             if run.is_empty() {
                 return Err(format!("Step '{}': empty run command", step_def.id));
             }
-            StepKind::Shell { argv: run.clone() }
+            StepKind::Command { argv: run.clone() }
         } else if let Some(ref builtin) = step_def.builtin {
             if !KNOWN_BUILTINS.contains(&builtin.as_str()) {
                 return Err(format!(

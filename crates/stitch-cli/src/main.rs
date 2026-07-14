@@ -501,7 +501,7 @@ fn cmd_exec(
         vec![exec::ExecutionStep {
             id: "cmd".to_string(),
             mode: exec_mode,
-            kind: exec::StepKind::Shell {
+            kind: exec::StepKind::Command {
                 argv: trailing_command.to_vec(),
             },
             condition: None,
@@ -513,7 +513,7 @@ fn cmd_exec(
             .map(|(idx, s)| exec::ExecutionStep {
                 id: format!("step-{}", idx + 1),
                 mode: exec_mode,
-                kind: exec::StepKind::Shell {
+                kind: exec::StepKind::Command {
                     argv: vec!["sh".to_string(), "-c".to_string(), s.to_string()],
                 },
                 condition: None,
