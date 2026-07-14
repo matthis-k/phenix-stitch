@@ -1,0 +1,43 @@
+name: Apply Stitch QA P1
+
+on:
+  push:
+    branches:
+      - qa/idempotent-transactions
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - name: Apply replay-safety patch
+        run: python3 .github/scripts/apply-stitch-qa-p1.py
+
+      - name: Remove temporary patch machinery
+        run: rm .github/scripts/apply-stitch-qa-p1.py .github/workflows/apply-stitch-qa-p1.yml
+
+      - name: Format Rust
+        run: cargo fmt --all
+
+      - name: Run Rust tests
+        run: cargo test --workspace
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Commit applied changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: make sync transactions replay-safe"
+          git push origin HEAD:qa/idempotent-transactions
