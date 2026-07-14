@@ -125,6 +125,80 @@ fn action_id(action: &Action) -> String {
     }
 }
 
+const ACTION_TRAILER: &str = "Stitch-Action";
+
+fn action_commit_message(
+    message: &str,
+    transaction_id: &str,
+    workspace: &str,
+    action: &Action,
+) -> String {
+    let mut message = crate::model::add_trailers(message, transaction_id, workspace);
+    message.push_str(&format!("{}: {}\n", ACTION_TRAILER, action_id(action)));
+    message
+}
+
+fn committed_action_head(
+    repo: &Path,
+    transaction_id: &str,
+    action: &Action,
+) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%B", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .map_err(|error| format!("Inspect committed action: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Inspect committed action in '{}': {}",
+            repo.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let message = String::from_utf8_lossy(&output.stdout);
+    let transaction_trailer = format!("Change-Set: {transaction_id}");
+    let action_trailer = format!("{}: {}", ACTION_TRAILER, action_id(action));
+    let has_transaction = message
+        .lines()
+        .any(|line| line.trim() == transaction_trailer);
+    let has_action = message.lines().any(|line| line.trim() == action_trailer);
+
+    if has_transaction && has_action {
+        return git::git_head(repo).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn remote_branch_head(repo: &Path, branch: &str) -> Result<Option<String>, String> {
+    let reference = format!("refs/heads/{branch}");
+    let output = std::process::Command::new("git")
+        .args(["ls-remote", "--heads", "origin", &reference])
+        .current_dir(repo)
+        .output()
+        .map_err(|error| format!("Inspect remote branch '{branch}': {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Inspect remote branch '{}' in '{}': {}",
+            branch,
+            repo.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .split_whitespace()
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+fn branch_is_published(repo: &Path, branch: &str, expected_sha: &str) -> Result<bool, String> {
+    Ok(remote_branch_head(repo, branch)?.as_deref() == Some(expected_sha))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionJournalEntry {
     pub action_id: String,
@@ -589,7 +663,7 @@ fn execute_single_action(
                 .unwrap_or_else(|| message.clone());
 
             git::git_add(&node.path, &files)?;
-            let trailed = crate::model::add_trailers(&msg, &plan.transaction_id, &cfg.workspace);
+            let trailed = action_commit_message(&msg, &plan.transaction_id, &cfg.workspace, action);
             git::git_commit(&node.path, &trailed)?;
             let sha = git::git_head(&node.path)?;
             commit_shas.insert(node_id.clone(), sha.clone());
@@ -639,7 +713,7 @@ fn execute_single_action(
 
                 git::git_add(&node.path, &[lock_path.to_string_lossy().to_string()])?;
                 let trailed =
-                    crate::model::add_trailers(&msg, &plan.transaction_id, &cfg.workspace);
+                    action_commit_message(&msg, &plan.transaction_id, &cfg.workspace, action);
                 git::git_commit(&node.path, &trailed)?;
                 let sha = git::git_head(&node.path)?;
                 commit_shas.insert(node_id.clone(), sha.clone());
@@ -721,9 +795,32 @@ fn execute_single_action(
                 .and_then(|n| n.branch.as_deref())
                 .unwrap_or(&node.branch);
 
+            let local_head = git::git_head(&node.path)?;
+            if branch_is_published(&node.path, branch, &local_head).unwrap_or(false) {
+                push_results.insert(node.name.clone(), Ok(()));
+                if let Some(entry) = journal.nodes.get_mut(node_id) {
+                    entry.pushed = true;
+                }
+                let action_id = action_id(action);
+                if let Some(entry) = journal
+                    .actions
+                    .iter_mut()
+                    .find(|entry| entry.action_id == action_id)
+                {
+                    entry.pushed = true;
+                }
+                return Ok(());
+            }
+
             let result = git_push(&node.path, branch);
             match result {
                 Ok(()) => {
+                    if !branch_is_published(&node.path, branch, &local_head)? {
+                        return Err(format!(
+                            "Push for '{}' returned success but origin/{} does not resolve to {}",
+                            node.name, branch, local_head
+                        ));
+                    }
                     push_results.insert(node.name.clone(), Ok(()));
                     if let Some(entry) = journal.nodes.get_mut(node_id) {
                         entry.pushed = true;
@@ -925,13 +1022,43 @@ pub fn resume_sync(
         }
     }
 
-    // Resume from journal.actions, not a newly computed plan
+    // Resume from journal.actions, not a newly computed plan.
+    // A process can terminate after Git completed an operation but before the
+    // journal was persisted. Reconcile durable Git state before replaying it.
     for entry in &resume_journal.actions.clone() {
         if entry.state == ActionState::Done {
             if matches!(entry.action, Action::Push { .. }) && entry.pushed {
                 push_results.insert(entry.node.clone(), Ok(()));
             }
             continue;
+        }
+
+        if matches!(
+            entry.action,
+            Action::Commit { .. } | Action::UpdateInputs { .. }
+        ) {
+            let node_path = resume_journal
+                .nodes
+                .get(&entry.node)
+                .map(|node| Path::new(&node.path))
+                .unwrap_or(Path::new("."));
+            if let Some(sha) = committed_action_head(node_path, transaction_id, &entry.action)? {
+                commit_shas.insert(entry.node.clone(), sha.clone());
+                if let Some(action_entry) = resume_journal
+                    .actions
+                    .iter_mut()
+                    .find(|candidate| candidate.action_id == entry.action_id)
+                {
+                    action_entry.state = ActionState::Done;
+                    action_entry.commit_sha = Some(sha.clone());
+                    action_entry.error = None;
+                }
+                if let Some(node_entry) = resume_journal.nodes.get_mut(&entry.node) {
+                    node_entry.commit_sha = Some(sha);
+                }
+                write_journal(&resume_journal, cfg)?;
+                continue;
+            }
         }
 
         match &entry.action {
@@ -947,15 +1074,10 @@ pub fn resume_sync(
                         .unwrap_or(Path::new(".")),
                 )?;
                 if current_files.is_empty() {
-                    if let Some(e) = resume_journal
-                        .actions
-                        .iter_mut()
-                        .find(|e| e.action_id == entry.action_id)
-                    {
-                        e.state = ActionState::Done;
-                    }
-                    write_journal(&resume_journal, cfg)?;
-                    continue;
+                    return Err(format!(
+                        "Resume refused for '{}': no pending files and HEAD has no matching {} trailer for action '{}'. The transaction cannot prove that the commit completed.",
+                        node_id, ACTION_TRAILER, entry.action_id
+                    ));
                 }
 
                 let node_path = resume_journal
@@ -982,7 +1104,8 @@ pub fn resume_sync(
                 };
 
                 git::git_add(Path::new(&node_path), &current_files)?;
-                let trailed = crate::model::add_trailers(&msg, transaction_id, &cfg.workspace);
+                let trailed =
+                    action_commit_message(&msg, transaction_id, &cfg.workspace, &entry.action);
                 git::git_commit(Path::new(&node_path), &trailed)?;
                 let sha = git::git_head(Path::new(&node_path))?;
                 commit_shas.insert(node_id.clone(), sha.clone());
@@ -1038,7 +1161,8 @@ pub fn resume_sync(
                         &[lock_path.to_string_lossy().to_string()],
                     )?;
                     let msg = format!("chore(inputs): resume sync for {}", node_id);
-                    let trailed = crate::model::add_trailers(&msg, transaction_id, &cfg.workspace);
+                    let trailed =
+                        action_commit_message(&msg, transaction_id, &cfg.workspace, &entry.action);
                     git::git_commit(Path::new(&node_path), &trailed)?;
                     let sha = git::git_head(Path::new(&node_path))?;
                     commit_shas.insert(node_id.clone(), sha.clone());
@@ -1120,6 +1244,26 @@ pub fn resume_sync(
                     .get(node_id)
                     .and_then(|n| n.branch.as_deref())
                     .unwrap_or("main");
+                let local_head = git::git_head(Path::new(&node_path))?;
+                if branch_is_published(Path::new(&node_path), branch, &local_head).unwrap_or(false)
+                {
+                    push_results.insert(node_id.clone(), Ok(()));
+                    if let Some(action_entry) = resume_journal
+                        .actions
+                        .iter_mut()
+                        .find(|candidate| candidate.action_id == entry.action_id)
+                    {
+                        action_entry.state = ActionState::Done;
+                        action_entry.pushed = true;
+                        action_entry.error = None;
+                    }
+                    if let Some(node_entry) = resume_journal.nodes.get_mut(node_id) {
+                        node_entry.pushed = true;
+                    }
+                    write_journal(&resume_journal, cfg)?;
+                    continue;
+                }
+
                 let result = git_push(Path::new(&node_path), branch);
                 if let Err(ref e) = result {
                     push_results.insert(node_id.clone(), Err(e.clone()));
@@ -1135,6 +1279,13 @@ pub fn resume_sync(
                     resume_journal.phase = JournalPhase::Failed;
                     write_journal(&resume_journal, cfg)?;
                     break;
+                }
+
+                if !branch_is_published(Path::new(&node_path), branch, &local_head)? {
+                    return Err(format!(
+                        "Push for '{}' returned success but origin/{} does not resolve to {}",
+                        node_id, branch, local_head
+                    ));
                 }
 
                 push_results.insert(node_id.clone(), Ok(()));
@@ -1189,12 +1340,37 @@ fn journal_dir(cfg: &WorkspaceConfig) -> Result<std::path::PathBuf, String> {
 }
 
 fn write_journal(journal: &TransactionJournal, cfg: &WorkspaceConfig) -> Result<(), String> {
+    use std::io::Write as _;
+
     let dir = journal_dir(cfg)?;
     let path = dir.join(format!("{}.json", journal.transaction_id));
+    let temp_path = dir.join(format!(
+        ".{}.{}.tmp",
+        journal.transaction_id,
+        std::process::id()
+    ));
     let content =
-        serde_json::to_string_pretty(journal).map_err(|e| format!("Serialize journal: {}", e))?;
-    std::fs::write(&path, content).map_err(|e| format!("Write journal: {}", e))?;
-    Ok(())
+        serde_json::to_vec_pretty(journal).map_err(|e| format!("Serialize journal: {}", e))?;
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp_path)
+            .map_err(|e| format!("Create temporary journal: {}", e))?;
+        file.write_all(&content)
+            .map_err(|e| format!("Write temporary journal: {}", e))?;
+        file.sync_all()
+            .map_err(|e| format!("Sync temporary journal: {}", e))?;
+        std::fs::rename(&temp_path, &path).map_err(|e| format!("Replace journal: {}", e))?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
 }
 
 fn load_journal(
@@ -1603,9 +1779,7 @@ mod tests {
     #[test]
     fn test_update_flake_lock_input_fails_without_nix() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join("__sync_test_flake_lock");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
 
         let lock_content = r#"{
             "nodes": {
@@ -1620,20 +1794,18 @@ mod tests {
                 }
             }
         }"#;
-        let mut f = std::fs::File::create(dir.join("flake.lock")).unwrap();
+        let mut f = std::fs::File::create(dir.path().join("flake.lock")).unwrap();
         f.write_all(lock_content.as_bytes()).unwrap();
 
         // Without nix available, this should fail (no direct fallback anymore)
         let result = update_flake_lock_input(
-            &dir,
+            dir.path(),
             "phenix-pins",
             "def4567890123456789012345678901234567890",
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("nix flake update") || err.contains("resumable"));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1653,5 +1825,64 @@ mod tests {
         let id = generate_transaction_id();
         assert!(id.starts_with("sync-"));
         assert!(id.len() > 10);
+    }
+
+    #[test]
+    fn action_commit_message_carries_replay_identity() {
+        let action = Action::Commit {
+            node: "phenix-stitch".to_string(),
+            message: "ignored".to_string(),
+        };
+        let message = action_commit_message("fix: replay safety", "tx-123", "phenix", &action);
+
+        assert!(message.contains("Change-Set: tx-123"));
+        assert!(message.contains("Stitch-Action: commit-phenix-stitch"));
+    }
+
+    #[test]
+    fn committed_action_head_recovers_the_exact_action() {
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "stitch@example.invalid"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Stitch Test"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "content").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let action = Action::Commit {
+            node: "repo".to_string(),
+            message: "ignored".to_string(),
+        };
+        let message = action_commit_message("fix: replay safety", "tx-123", "phenix", &action);
+        git::git_commit(dir.path(), &message).unwrap();
+
+        let recovered = committed_action_head(dir.path(), "tx-123", &action)
+            .unwrap()
+            .expect("matching action should be recoverable");
+        assert_eq!(recovered, git::git_head(dir.path()).unwrap());
+
+        let other = Action::UpdateInputs {
+            node: "repo".to_string(),
+            updates: Vec::new(),
+            message: "ignored".to_string(),
+        };
+        assert!(committed_action_head(dir.path(), "tx-123", &other)
+            .unwrap()
+            .is_none());
     }
 }
