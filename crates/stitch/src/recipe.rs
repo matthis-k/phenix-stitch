@@ -20,6 +20,7 @@ const KNOWN_BUILTINS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecipeCollection {
     pub recipes: Vec<RecipeDef>,
 }

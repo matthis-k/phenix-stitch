@@ -38,6 +38,7 @@ pub use transition::{valid_actions_for_state, validate_state_transition};
 /// A work loop wallet.  Stores only pointers + decisions; recompute everything
 /// else live from JJ / Stitch / Tend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoopWallet {
     pub loop_id: String,
     pub feature: String,

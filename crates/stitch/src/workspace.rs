@@ -45,6 +45,7 @@ impl Default for WorkspaceDiscoveryPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceState {
     #[serde(default)]
     pub discovery: WorkspaceDiscoveryPolicy,
