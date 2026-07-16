@@ -1,9 +1,9 @@
 name: API cleanup agent
 
 on:
-  push:
+  pull_request:
     branches:
-      - cleanup/current-api-only
+      - main
 
 permissions:
   contents: write
@@ -16,36 +16,21 @@ jobs:
         with:
           ref: cleanup/current-api-only
           fetch-depth: 0
-      - name: Run cleanup and persist diagnostics
+      - name: Apply cleanup
+        run: python3 tools/api_cleanup.py
+      - name: Validate cleanup
+        run: |
+          cargo fmt --all -- --check
+          cargo check --workspace --all-targets
+          cargo test --workspace
+      - name: Commit generated cleanup
         shell: bash
         run: |
-          set -uo pipefail
-          if [[ -f tools/api_cleanup.py ]]; then
-            python3 tools/api_cleanup.py
-          fi
-          {
-            echo '=== legacy graph symbols ==='
-            rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
-              'WorkspaceDag|WorkspaceGraph|WorkspaceNode|WorkspaceEdge|FlakeNode|DependencyEdge|from_legacy|to_legacy' crates docs || true
-            echo '=== Stitch-owned schema versions ==='
-            rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
-              'schema_version|(^|[^A-Za-z_])version[[:space:]]*:' crates docs || true
-            echo '=== compatibility markers ==='
-            rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
-              'legacy|compat|deprecated' crates docs || true
-          } > api-cleanup-inventory.txt
-          cargo fmt --all -- --check > api-cleanup-check.log 2>&1
-          fmt_status=$?
-          cargo check --workspace --all-targets >> api-cleanup-check.log 2>&1
-          check_status=$?
-          cargo test --workspace >> api-cleanup-check.log 2>&1
-          test_status=$?
-          printf '\nfmt=%s check=%s test=%s\n' "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
+          rm -f api-cleanup-check.log api-cleanup-inventory.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m 'chore: capture API cleanup diagnostics'
+            git commit -m 'refactor: remove versioned Stitch data contracts'
             git push origin HEAD:cleanup/current-api-only
           fi
-          exit $((fmt_status || check_status || test_status))
