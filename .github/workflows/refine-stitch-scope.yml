@@ -1,0 +1,1052 @@
+name: Refine Stitch scope
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/refine-stitch-scope.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Narrow Stitch to graph planning and ordered execution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -f .tend.json
+          rm -f crates/stitch/src/changeset.rs crates/stitch/src/recipe.rs crates/stitch/src/sync.rs crates/stitch/src/workloop.rs
+          rm -f crates/stitch-mcp/src/prompts.rs crates/stitch-mcp/src/resources.rs
+
+          cat > flake.nix <<'EOF'
+          {
+            description = "Dependency-aware ordered execution across Phenix repositories";
+
+            inputs = {
+              flake-parts.url = "github:hercules-ci/flake-parts";
+              phenix-pins.url = "github:matthis-k/phenix-pins";
+              nixpkgs.follows = "phenix-pins/nixpkgs";
+              devenv = {
+                url = "github:cachix/devenv";
+                inputs.nixpkgs.follows = "nixpkgs";
+              };
+              treefmt-nix = {
+                url = "github:numtide/treefmt-nix";
+                inputs.nixpkgs.follows = "nixpkgs";
+              };
+              git-hooks = {
+                url = "github:cachix/git-hooks.nix";
+                inputs.nixpkgs.follows = "nixpkgs";
+              };
+            };
+
+            outputs = inputs@{ flake-parts, ... }:
+              flake-parts.lib.mkFlake { inherit inputs; } {
+                systems = [ "x86_64-linux" "aarch64-linux" ];
+                imports = [
+                  inputs.devenv.flakeModule
+                  ./modules/package.nix
+                ];
+                flake.flakeModules.default = import ./modules/flake-module.nix;
+              };
+          }
+          EOF
+
+          cat > crates/stitch/src/lib.rs <<'EOF'
+          pub mod config;
+          pub mod exec;
+          pub mod git;
+          pub mod graph;
+          pub mod model;
+          pub mod status;
+          pub mod validate;
+          pub mod workspace;
+
+          pub use exec::{
+              build_plan, build_scope, parse_closure_mode, parse_execution_mode, parse_order_mode,
+              parse_selection_mode, run_plan, ClosureMode, ExecutionMode, ExecutionNode, ExecutionPlan,
+              ExecutionReport, ExecutionScope, OrderMode, RunOptions, SelectionMode,
+          };
+          pub use graph::{
+              derive_workspace_graph, derive_workspace_graph_from_config, discover_inventory,
+              discover_inventory_from_config, parse_flake_lock, provider_before_consumer_order,
+              validate_graph, CanonicalWorkspaceGraph, CanonicalizeError, DagPlan, DagPlanRequest,
+              DagPlanner, DiagnosticSeverity, EdgeKind, EdgeSpec, ExternalInput, GraphDiagnostic,
+              GraphValidationReport, NodeKind, NodeSpec, PlanClosureMode, PlanOrderMode,
+              PlanSelectionMode, PlannedDagNode, RepoRole, ValidateOptions, WorkspaceDiscovery,
+              WorkspaceGraphDraft,
+          };
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/stitch/src/graph/inventory.rs')
+          path.write_text(r'''use std::collections::BTreeMap;
+          use std::path::Path;
+
+          use serde::Deserialize;
+
+          use crate::graph::{EdgeKind, EdgeSpec, NodeKind, NodeSpec, RepoRole};
+          use crate::model::WorkspaceConfig;
+
+          #[derive(Debug, Clone)]
+          pub struct WorkspaceDiscovery {
+              pub nodes: BTreeMap<String, NodeSpec>,
+              pub manual_edges: Vec<EdgeSpec>,
+          }
+
+          #[derive(Debug, Default, Deserialize)]
+          #[serde(deny_unknown_fields)]
+          struct RepositoryGraphConfig {
+              #[serde(default)]
+              role: Option<RepoRole>,
+              #[serde(default)]
+              layer: Option<u32>,
+              #[serde(default)]
+              dependencies: Vec<String>,
+          }
+
+          pub fn discover_inventory(
+              root: &Path,
+              _legacy_metadata: Option<&Path>,
+          ) -> Result<WorkspaceDiscovery, String> {
+              let config = crate::workspace::load_workspace_config(root)?;
+              discover_inventory_from_config(&config, None)
+          }
+
+          pub fn discover_inventory_from_config(
+              config: &WorkspaceConfig,
+              _legacy_metadata: Option<&Path>,
+          ) -> Result<WorkspaceDiscovery, String> {
+              let root = config.config_dir.as_deref().ok_or_else(|| {
+                  "Cannot discover workspace inventory: workspace root is unavailable".to_string()
+              })?;
+              let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+              let mut nodes = BTreeMap::new();
+              let mut declarations = BTreeMap::new();
+
+              for repository in &config.repos {
+                  let path = repository.resolved_path(config);
+                  let canonical_path = path.canonicalize().unwrap_or(path);
+                  let is_root = repository.name == config.workspace || canonical_path == canonical_root;
+                  let declaration = load_repository_graph_config(&canonical_path)?;
+                  let role = if is_root {
+                      RepoRole::Root
+                  } else {
+                      declaration.role.unwrap_or(RepoRole::Unknown)
+                  };
+                  let kind = role_to_kind(role);
+                  let layer = declaration.layer.or_else(|| role.layer());
+
+                  let node = NodeSpec {
+                      id: repository.name.clone(),
+                      path: canonical_path,
+                      repo_url: repository.remote.clone(),
+                      kind,
+                      role,
+                      layer,
+                      is_root,
+                  };
+                  if nodes.insert(repository.name.clone(), node).is_some() {
+                      return Err(format!(
+                          "Workspace inventory contains duplicate repository id '{}'",
+                          repository.name
+                      ));
+                  }
+                  declarations.insert(repository.name.clone(), declaration);
+              }
+
+              if nodes.values().filter(|node| node.is_root).count() != 1 {
+                  return Err("Workspace inventory must contain exactly one root repository".to_string());
+              }
+
+              let mut manual_edges = Vec::new();
+              for (source, declaration) in declarations {
+                  let source_file = nodes[&source].path.join(".stitch.json");
+                  for target in declaration.dependencies {
+                      if !nodes.contains_key(&target) {
+                          return Err(format!(
+                              "{} declares unknown workspace dependency '{}'",
+                              source_file.display(),
+                              target
+                          ));
+                      }
+                      if source != target {
+                          manual_edges.push(EdgeSpec {
+                              from: source.clone(),
+                              to: target,
+                              kind: EdgeKind::Manual {
+                                  source_file: source_file.clone(),
+                              },
+                          });
+                      }
+                  }
+              }
+
+              Ok(WorkspaceDiscovery { nodes, manual_edges })
+          }
+
+          fn load_repository_graph_config(path: &Path) -> Result<RepositoryGraphConfig, String> {
+              let file = path.join(".stitch.json");
+              if !file.exists() {
+                  return Ok(RepositoryGraphConfig::default());
+              }
+              let content = std::fs::read_to_string(&file)
+                  .map_err(|error| format!("Read {}: {error}", file.display()))?;
+              serde_json::from_str(&content)
+                  .map_err(|error| format!("Parse {}: {error}", file.display()))
+          }
+
+          fn role_to_kind(role: RepoRole) -> NodeKind {
+              match role {
+                  RepoRole::Pins => NodeKind::Pins,
+                  RepoRole::PkgsAggregator => NodeKind::PackageProvider,
+                  RepoRole::Producer => NodeKind::ToolProvider,
+                  RepoRole::Consumer => NodeKind::HostConsumer,
+                  RepoRole::Root => NodeKind::WorkspaceRoot,
+                  RepoRole::External => NodeKind::External,
+                  RepoRole::Lib
+                  | RepoRole::PkgsBase
+                  | RepoRole::Protocols
+                  | RepoRole::Integration
+                  | RepoRole::Unknown => NodeKind::Unknown,
+              }
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+              use crate::model::RepoConfig;
+
+              #[test]
+              fn repository_local_config_adds_classification_and_edges() {
+                  let directory = tempfile::tempdir().unwrap();
+                  let provider = directory.path().join("repos/provider");
+                  std::fs::create_dir_all(&provider).unwrap();
+                  std::fs::write(
+                      provider.join(".stitch.json"),
+                      r#"{"role":"producer","layer":2,"dependencies":["workspace"]}"#,
+                  )
+                  .unwrap();
+                  let config = WorkspaceConfig {
+                      workspace: "workspace".to_string(),
+                      repos: vec![
+                          RepoConfig { name: "workspace".to_string(), path: ".".to_string(), remote: None },
+                          RepoConfig { name: "provider".to_string(), path: "repos/provider".to_string(), remote: None },
+                      ],
+                      config_dir: Some(directory.path().to_path_buf()),
+                  };
+                  let discovery = discover_inventory_from_config(&config, None).unwrap();
+                  assert_eq!(discovery.nodes["provider"].role, RepoRole::Producer);
+                  assert_eq!(discovery.manual_edges.len(), 1);
+              }
+          }
+          ''')
+
+          path = Path('crates/stitch/src/graph/strategy.rs')
+          text = path.read_text()
+          text = text.replace(
+              'let aliases = build_workspace_aliases(&discovery.nodes);\n        let nodes: BTreeMap<String, NodeSpec> = discovery.nodes.into_iter().collect();\n        let mut draft = WorkspaceGraphDraft::new(nodes);',
+              'let aliases = build_workspace_aliases(&discovery.nodes);\n        let manual_edges = discovery.manual_edges;\n        let nodes: BTreeMap<String, NodeSpec> = discovery.nodes.into_iter().collect();\n        let mut draft = WorkspaceGraphDraft::new(nodes);\n        draft.edges.extend(manual_edges);'
+          )
+          path.write_text(text)
+          PY
+
+          cat > crates/stitch/src/exec.rs <<'EOF'
+          use std::collections::BTreeSet;
+          use std::path::{Path, PathBuf};
+          use std::process::Command;
+
+          use serde::Serialize;
+
+          use crate::graph;
+          use crate::model::WorkspaceConfig;
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub enum SelectionMode { All, Changed, Dirty, Current, Explicit }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub enum ClosureMode { SelfOnly, Upstream, Downstream, Connected, All }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub enum OrderMode { Stable, ProvidersFirst, ConsumersFirst }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub enum ExecutionMode { ReadOnly, Mutating }
+
+          #[derive(Debug, Clone)]
+          pub struct ExecutionScope {
+              pub selection: SelectionMode,
+              pub explicit_nodes: Vec<String>,
+              pub closure: ClosureMode,
+              pub order: OrderMode,
+          }
+
+          #[derive(Debug, Clone, Serialize)]
+          pub struct ExecutionNode {
+              pub name: String,
+              pub path: PathBuf,
+              pub role: String,
+              pub layer: u32,
+              pub directly_selected: bool,
+              pub directly_changed: bool,
+          }
+
+          #[derive(Debug, Clone)]
+          pub struct ExecutionPlan {
+              pub nodes: Vec<ExecutionNode>,
+              pub argv: Vec<String>,
+              pub mode: ExecutionMode,
+          }
+
+          #[derive(Debug, Clone)]
+          pub struct RunOptions {
+              pub dry_run: bool,
+              pub apply: bool,
+              pub keep_going: bool,
+          }
+
+          #[derive(Debug, Clone, Serialize)]
+          pub struct NodeResult {
+              pub node: String,
+              pub path: PathBuf,
+              pub success: bool,
+              pub exit_code: Option<i32>,
+              pub stdout: String,
+              pub stderr: String,
+          }
+
+          #[derive(Debug, Clone, Serialize)]
+          pub struct ExecutionReport {
+              pub node_results: Vec<NodeResult>,
+              pub total_nodes: usize,
+              pub successful_nodes: usize,
+              pub failed_nodes: usize,
+              pub stopped_early: bool,
+          }
+
+          pub fn parse_selection_mode(value: &str) -> Result<SelectionMode, String> {
+              match value {
+                  "all" => Ok(SelectionMode::All),
+                  "changed" => Ok(SelectionMode::Changed),
+                  "dirty" => Ok(SelectionMode::Dirty),
+                  "current" => Ok(SelectionMode::Current),
+                  "explicit" => Ok(SelectionMode::Explicit),
+                  _ => Err(format!("unknown selection '{value}'")),
+              }
+          }
+
+          pub fn parse_closure_mode(value: &str) -> Result<ClosureMode, String> {
+              match value {
+                  "self" => Ok(ClosureMode::SelfOnly),
+                  "upstream" => Ok(ClosureMode::Upstream),
+                  "downstream" => Ok(ClosureMode::Downstream),
+                  "connected" => Ok(ClosureMode::Connected),
+                  "all" => Ok(ClosureMode::All),
+                  _ => Err(format!("unknown closure '{value}'")),
+              }
+          }
+
+          pub fn parse_order_mode(value: &str) -> Result<OrderMode, String> {
+              match value {
+                  "stable" => Ok(OrderMode::Stable),
+                  "providers-first" => Ok(OrderMode::ProvidersFirst),
+                  "consumers-first" => Ok(OrderMode::ConsumersFirst),
+                  _ => Err(format!("unknown order '{value}'")),
+              }
+          }
+
+          pub fn parse_execution_mode(value: &str) -> Result<ExecutionMode, String> {
+              match value {
+                  "read-only" | "readonly" => Ok(ExecutionMode::ReadOnly),
+                  "mutating" => Ok(ExecutionMode::Mutating),
+                  _ => Err(format!("unknown execution mode '{value}'")),
+              }
+          }
+
+          pub fn build_scope(
+              config: &WorkspaceConfig,
+              scope: &ExecutionScope,
+          ) -> Result<Vec<ExecutionNode>, String> {
+              let graph = load_canonical_graph(config)?;
+              let all_names = config.repos.iter().map(|repo| repo.name.clone()).collect::<Vec<_>>();
+              let selected = select_nodes(config, scope)?;
+              let planner = graph::DagPlanner::new(&graph);
+              let stable_order = all_names.clone();
+              let plan = planner.plan(&graph::DagPlanRequest {
+                  selection: if scope.selection == SelectionMode::All {
+                      graph::PlanSelectionMode::All
+                  } else {
+                      graph::PlanSelectionMode::Explicit
+                  },
+                  explicit_nodes: selected.clone(),
+                  closure: match scope.closure {
+                      ClosureMode::SelfOnly => graph::PlanClosureMode::SelfOnly,
+                      ClosureMode::Upstream => graph::PlanClosureMode::Upstream,
+                      ClosureMode::Downstream => graph::PlanClosureMode::Downstream,
+                      ClosureMode::Connected => graph::PlanClosureMode::Connected,
+                      ClosureMode::All => graph::PlanClosureMode::All,
+                  },
+                  order: match scope.order {
+                      OrderMode::Stable => graph::PlanOrderMode::Stable,
+                      OrderMode::ProvidersFirst => graph::PlanOrderMode::ProvidersFirst,
+                      OrderMode::ConsumersFirst => graph::PlanOrderMode::ConsumersFirst,
+                  },
+                  stable_order,
+              })?;
+              let selected_set = selected.into_iter().collect::<BTreeSet<_>>();
+
+              plan.nodes
+                  .into_iter()
+                  .map(|planned| {
+                      let repository = config.repos.iter().find(|repo| repo.name == planned.name)
+                          .ok_or_else(|| format!("unknown planned node '{}'", planned.name))?;
+                      let node = graph.node(&planned.name)
+                          .ok_or_else(|| format!("graph node '{}' disappeared", planned.name))?;
+                      Ok(ExecutionNode {
+                          name: planned.name.clone(),
+                          path: repository.resolved_path(config),
+                          role: node.role.as_str().to_string(),
+                          layer: node.layer.or_else(|| node.role.layer()).unwrap_or(255),
+                          directly_selected: selected_set.contains(&planned.name),
+                          directly_changed: repository_changed(&repository.resolved_path(config)),
+                      })
+                  })
+                  .collect()
+          }
+
+          pub fn build_plan(
+              config: &WorkspaceConfig,
+              scope: &ExecutionScope,
+              argv: Vec<String>,
+              mode: ExecutionMode,
+          ) -> Result<ExecutionPlan, String> {
+              if argv.is_empty() {
+                  return Err("an argv vector is required after --".to_string());
+              }
+              Ok(ExecutionPlan { nodes: build_scope(config, scope)?, argv, mode })
+          }
+
+          pub fn run_plan(plan: &ExecutionPlan, options: &RunOptions) -> Result<ExecutionReport, String> {
+              if plan.mode == ExecutionMode::Mutating && !options.apply && !options.dry_run {
+                  return Err("mutating execution requires --apply or --dry-run".to_string());
+              }
+              let mut results = Vec::new();
+              let total = plan.nodes.len();
+              let mut stopped_early = false;
+
+              for (index, node) in plan.nodes.iter().enumerate() {
+                  if options.dry_run {
+                      results.push(NodeResult {
+                          node: node.name.clone(),
+                          path: node.path.clone(),
+                          success: true,
+                          exit_code: Some(0),
+                          stdout: format!("would execute: {}", plan.argv.join(" ")),
+                          stderr: String::new(),
+                      });
+                      continue;
+                  }
+
+                  let output = Command::new(&plan.argv[0])
+                      .args(&plan.argv[1..])
+                      .current_dir(&node.path)
+                      .env("STITCH_NODE_ID", &node.name)
+                      .env("STITCH_NODE_PATH", &node.path)
+                      .env("STITCH_NODE_ROLE", &node.role)
+                      .env("STITCH_NODE_LAYER", node.layer.to_string())
+                      .env("STITCH_NODE_INDEX", index.to_string())
+                      .env("STITCH_NODE_TOTAL", total.to_string())
+                      .env("STITCH_NODE_DIRECTLY_SELECTED", node.directly_selected.to_string())
+                      .env("STITCH_NODE_DIRECTLY_CHANGED", node.directly_changed.to_string())
+                      .output()
+                      .map_err(|error| format!("execute '{}' in {}: {error}", plan.argv[0], node.path.display()))?;
+                  let result = NodeResult {
+                      node: node.name.clone(),
+                      path: node.path.clone(),
+                      success: output.status.success(),
+                      exit_code: output.status.code(),
+                      stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                      stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                  };
+                  let failed = !result.success;
+                  results.push(result);
+                  if failed && !options.keep_going {
+                      stopped_early = index + 1 < total;
+                      break;
+                  }
+              }
+
+              let successful = results.iter().filter(|result| result.success).count();
+              let failed = results.len() - successful;
+              Ok(ExecutionReport {
+                  node_results: results,
+                  total_nodes: total,
+                  successful_nodes: successful,
+                  failed_nodes: failed,
+                  stopped_early,
+              })
+          }
+
+          fn select_nodes(config: &WorkspaceConfig, scope: &ExecutionScope) -> Result<Vec<String>, String> {
+              match scope.selection {
+                  SelectionMode::All => Ok(config.repos.iter().map(|repo| repo.name.clone()).collect()),
+                  SelectionMode::Changed | SelectionMode::Dirty => Ok(config.repos.iter()
+                      .filter(|repo| repository_changed(&repo.resolved_path(config)))
+                      .map(|repo| repo.name.clone())
+                      .collect()),
+                  SelectionMode::Explicit => {
+                      if scope.explicit_nodes.is_empty() {
+                          return Err("explicit selection requires --node".to_string());
+                      }
+                      for name in &scope.explicit_nodes {
+                          if !config.repos.iter().any(|repo| &repo.name == name) {
+                              return Err(format!("unknown node '{name}'"));
+                          }
+                      }
+                      Ok(scope.explicit_nodes.clone())
+                  }
+                  SelectionMode::Current => {
+                      let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+                      let canonical = cwd.canonicalize().unwrap_or(cwd);
+                      config.repos.iter()
+                          .find(|repo| canonical.starts_with(repo.resolved_path(config).canonicalize().unwrap_or_else(|_| repo.resolved_path(config))))
+                          .map(|repo| vec![repo.name.clone()])
+                          .ok_or_else(|| "current directory is not inside a discovered repository".to_string())
+                  }
+              }
+          }
+
+          fn repository_changed(path: &Path) -> bool {
+              Command::new("git")
+                  .args(["status", "--porcelain"])
+                  .current_dir(path)
+                  .output()
+                  .map(|output| output.status.success() && !output.stdout.is_empty())
+                  .unwrap_or(false)
+          }
+
+          pub(crate) fn load_canonical_graph(config: &WorkspaceConfig) -> Result<graph::CanonicalWorkspaceGraph, String> {
+              graph::derive_workspace_graph_from_config(config, None)
+                  .map_err(|error| format!("derive workspace graph: {error}"))
+          }
+          EOF
+
+          cat > crates/stitch-cli/src/main.rs <<'EOF'
+          use std::path::PathBuf;
+
+          use clap::{Parser, Subcommand};
+          use stitch::exec::{
+              build_plan, build_scope, parse_closure_mode, parse_order_mode, ClosureMode,
+              ExecutionMode, ExecutionScope, OrderMode, RunOptions, SelectionMode,
+          };
+
+          #[derive(Parser)]
+          #[command(name = "stitch", version, about = "Run commands across a repository DAG in a deterministic order")]
+          struct Cli {
+              #[command(subcommand)]
+              command: Command,
+          }
+
+          #[derive(Subcommand)]
+          enum Command {
+              Workspace { #[command(subcommand)] command: WorkspaceCommand },
+              Graph { #[command(subcommand)] command: GraphCommand },
+              Status { #[arg(long)] dirty_only: bool, #[arg(long)] json: bool },
+              Exec(ExecArgs),
+          }
+
+          #[derive(Subcommand)]
+          enum WorkspaceCommand {
+              Discover { #[arg(default_value = ".")] workspace: PathBuf, #[arg(long)] json: bool },
+          }
+
+          #[derive(Subcommand)]
+          enum GraphCommand {
+              Derive { #[arg(default_value = ".")] workspace: PathBuf, #[arg(long)] json: bool },
+              Verify { #[arg(default_value = ".")] workspace: PathBuf, #[arg(long)] strict: bool, #[arg(long)] json: bool },
+              Order { #[arg(default_value = ".")] workspace: PathBuf, #[arg(long, default_value = "providers-first")] order: String, #[arg(long)] json: bool },
+          }
+
+          #[derive(clap::Args)]
+          struct ExecArgs {
+              #[arg(long, conflicts_with_all = ["changed", "dirty", "current", "node"])]
+              all: bool,
+              #[arg(long, conflicts_with_all = ["all", "dirty", "current", "node"])]
+              changed: bool,
+              #[arg(long, conflicts_with_all = ["all", "changed", "current", "node"])]
+              dirty: bool,
+              #[arg(long, conflicts_with_all = ["all", "changed", "dirty", "node"])]
+              current: bool,
+              #[arg(long, conflicts_with_all = ["all", "changed", "dirty", "current"])]
+              node: Vec<String>,
+              #[arg(long, default_value = "self")]
+              closure: String,
+              #[arg(long, default_value = "providers-first")]
+              order: String,
+              #[arg(long)]
+              apply: bool,
+              #[arg(long)]
+              dry_run: bool,
+              #[arg(long)]
+              keep_going: bool,
+              #[arg(long)]
+              json: bool,
+              #[arg(last = true, required = true)]
+              command: Vec<String>,
+          }
+
+          fn main() {
+              if let Err(error) = run() {
+                  eprintln!("error: {error}");
+                  std::process::exit(1);
+              }
+          }
+
+          fn run() -> Result<(), String> {
+              match Cli::parse().command {
+                  Command::Workspace { command } => workspace(command),
+                  Command::Graph { command } => graph(command),
+                  Command::Status { dirty_only, json } => status(dirty_only, json),
+                  Command::Exec(args) => exec(args),
+              }
+          }
+
+          fn workspace(command: WorkspaceCommand) -> Result<(), String> {
+              match command {
+                  WorkspaceCommand::Discover { workspace, json } => {
+                      let config = stitch::workspace::load_workspace_config(&workspace)?;
+                      if json {
+                          println!("{}", serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?);
+                      } else {
+                          for repository in config.repos {
+                              println!("{}\t{}", repository.name, repository.path);
+                          }
+                      }
+                      Ok(())
+                  }
+              }
+          }
+
+          fn graph(command: GraphCommand) -> Result<(), String> {
+              match command {
+                  GraphCommand::Derive { workspace, json } => {
+                      let graph = stitch::graph::derive_workspace_graph(&workspace, None).map_err(|error| error.to_string())?;
+                      print_graph(&graph, json)
+                  }
+                  GraphCommand::Verify { workspace, strict, json } => {
+                      let graph = stitch::graph::derive_workspace_graph(&workspace, None).map_err(|error| error.to_string())?;
+                      let report = stitch::graph::validate_graph(&graph, &stitch::graph::ValidateOptions { strict });
+                      if json {
+                          println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+                      } else {
+                          for diagnostic in &report.diagnostics {
+                              println!("{:?}\t{}\t{}", diagnostic.severity, diagnostic.code, diagnostic.message);
+                          }
+                      }
+                      if report.valid { Ok(()) } else { Err("graph validation failed".to_string()) }
+                  }
+                  GraphCommand::Order { workspace, order, json } => {
+                      let config = stitch::workspace::load_workspace_config(&workspace)?;
+                      let scope = ExecutionScope {
+                          selection: SelectionMode::All,
+                          explicit_nodes: Vec::new(),
+                          closure: ClosureMode::All,
+                          order: parse_order_mode(&order)?,
+                      };
+                      let nodes = build_scope(&config, &scope)?;
+                      if json {
+                          println!("{}", serde_json::to_string_pretty(&nodes).map_err(|error| error.to_string())?);
+                      } else {
+                          for node in nodes { println!("{}", node.name); }
+                      }
+                      Ok(())
+                  }
+              }
+          }
+
+          fn print_graph(graph: &stitch::graph::CanonicalWorkspaceGraph, json: bool) -> Result<(), String> {
+              let nodes = graph.node_ids().filter_map(|id| graph.node(id)).cloned().collect::<Vec<_>>();
+              let edges = graph.semantic_edges().into_iter().cloned().collect::<Vec<_>>();
+              if json {
+                  println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "nodes": nodes, "edges": edges })).map_err(|error| error.to_string())?);
+              } else {
+                  for edge in edges { println!("{} -> {}", edge.from, edge.to); }
+              }
+              Ok(())
+          }
+
+          fn status(dirty_only: bool, json: bool) -> Result<(), String> {
+              let config = stitch::config::find_and_load()?;
+              let statuses = stitch::status::collect_all(&config)?;
+              let statuses = statuses.into_iter().filter(|status| !dirty_only || status.is_dirty).collect::<Vec<_>>();
+              if json {
+                  println!("{}", serde_json::to_string_pretty(&statuses).map_err(|error| error.to_string())?);
+              } else {
+                  for status in statuses { println!("{}\t{}\t{}", status.name, status.branch, if status.is_dirty { "dirty" } else { "clean" }); }
+              }
+              Ok(())
+          }
+
+          fn exec(args: ExecArgs) -> Result<(), String> {
+              let config = stitch::config::find_and_load()?;
+              let selection = if args.all {
+                  SelectionMode::All
+              } else if args.changed {
+                  SelectionMode::Changed
+              } else if args.dirty {
+                  SelectionMode::Dirty
+              } else if args.current {
+                  SelectionMode::Current
+              } else if !args.node.is_empty() {
+                  SelectionMode::Explicit
+              } else {
+                  SelectionMode::Current
+              };
+              let scope = ExecutionScope {
+                  selection,
+                  explicit_nodes: args.node,
+                  closure: parse_closure_mode(&args.closure)?,
+                  order: parse_order_mode(&args.order)?,
+              };
+              let mode = if args.apply { ExecutionMode::Mutating } else { ExecutionMode::ReadOnly };
+              let plan = build_plan(&config, &scope, args.command, mode)?;
+              let report = stitch::exec::run_plan(&plan, &RunOptions {
+                  dry_run: args.dry_run,
+                  apply: args.apply,
+                  keep_going: args.keep_going,
+              })?;
+              if args.json {
+                  println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+              } else {
+                  for result in &report.node_results {
+                      println!("{}: {}", result.node, if result.success { "ok" } else { "failed" });
+                      if !result.stdout.is_empty() { print!("{}", result.stdout); }
+                      if !result.stderr.is_empty() { eprint!("{}", result.stderr); }
+                  }
+              }
+              if report.failed_nodes == 0 { Ok(()) } else { Err(format!("{} repository command(s) failed", report.failed_nodes)) }
+          }
+          EOF
+
+          cat > crates/stitch-mcp/src/main.rs <<'EOF'
+          mod tools;
+
+          use std::path::PathBuf;
+          use phenix_mcp_core::audit::AuditSink;
+          use phenix_mcp_core::mcp::{McpServer, ToolContext};
+          use phenix_mcp_core::roots::{McpRoot, RootValidator};
+          use phenix_mcp_core::runner::CommandRunner;
+          use phenix_mcp_core::safety::SafetyPolicy;
+
+          fn main() {
+              let audit_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                  .join(".local/share/phenix/audit/stitch-mcp");
+              let cwd = std::env::current_dir().unwrap_or_default();
+              let context = ToolContext {
+                  roots: RootValidator::new(vec![McpRoot::new(cwd, false)]),
+                  runner: CommandRunner::new(),
+                  audit: AuditSink::new(Some(audit_dir)),
+                  safety: SafetyPolicy::default(),
+                  server_name: "stitch-mcp".to_string(),
+                  server_version: "0.1.0".to_string(),
+              };
+              let mut server = McpServer::new(context);
+              server.add_tool(Box::new(tools::StitchStatusTool));
+              server.add_tool(Box::new(tools::StitchGraphTool));
+              server.add_tool(Box::new(tools::StitchPlanTool));
+              server.run();
+          }
+          EOF
+
+          cat > crates/stitch-mcp/src/tools.rs <<'EOF'
+          use phenix_mcp_core::mcp::{McpTool, ToolContext};
+          use phenix_mcp_core::result::{ErrorKind, ToolFailure, ToolResult};
+          use phenix_mcp_core::types::{MutationLevel, ToolMetadata};
+          use serde_json::{json, Value};
+          use stitch::exec::{ExecutionScope, SelectionMode};
+
+          fn metadata() -> ToolMetadata {
+              ToolMetadata {
+                  mutation: MutationLevel::ReadOnly,
+                  requires_plan: None,
+                  requires_clean_worktree: None,
+                  requires_confirmation: None,
+                  allowed_roots_only: Some(true),
+              }
+          }
+
+          fn failure(message: impl Into<String>, audit_id: &str) -> ToolFailure {
+              ToolFailure::new(ErrorKind::Internal, message, audit_id)
+          }
+
+          pub struct StitchStatusTool;
+          impl McpTool for StitchStatusTool {
+              fn name(&self) -> &str { "stitch.status" }
+              fn description(&self) -> &str { "Return status for every discovered repository" }
+              fn metadata(&self) -> ToolMetadata { metadata() }
+              fn input_schema(&self) -> Value { json!({ "dirty_only": { "type": "boolean" } }) }
+              fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+                  let audit_id = ctx.audit.generate_id();
+                  let dirty_only = input.get("dirty_only").and_then(Value::as_bool).unwrap_or(false);
+                  let config = stitch::config::find_and_load().map_err(|error| failure(error, &audit_id))?;
+                  let statuses = stitch::status::collect_all(&config).map_err(|error| failure(error, &audit_id))?
+                      .into_iter().filter(|status| !dirty_only || status.is_dirty).collect::<Vec<_>>();
+                  Ok(serde_json::to_value(ToolResult::ok(json!(statuses), "workspace status", &audit_id)).unwrap())
+              }
+          }
+
+          pub struct StitchGraphTool;
+          impl McpTool for StitchGraphTool {
+              fn name(&self) -> &str { "stitch.graph" }
+              fn description(&self) -> &str { "Return the canonical repository dependency graph" }
+              fn metadata(&self) -> ToolMetadata { metadata() }
+              fn input_schema(&self) -> Value { json!({}) }
+              fn call(&self, _input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+                  let audit_id = ctx.audit.generate_id();
+                  let config = stitch::config::find_and_load().map_err(|error| failure(error, &audit_id))?;
+                  let graph = stitch::graph::derive_workspace_graph_from_config(&config, None)
+                      .map_err(|error| failure(error.to_string(), &audit_id))?;
+                  let nodes = graph.node_ids().filter_map(|id| graph.node(id)).cloned().collect::<Vec<_>>();
+                  let edges = graph.semantic_edges().into_iter().cloned().collect::<Vec<_>>();
+                  Ok(serde_json::to_value(ToolResult::ok(json!({ "nodes": nodes, "edges": edges }), "workspace graph", &audit_id)).unwrap())
+              }
+          }
+
+          pub struct StitchPlanTool;
+          impl McpTool for StitchPlanTool {
+              fn name(&self) -> &str { "stitch.plan" }
+              fn description(&self) -> &str { "Plan a repository selection, closure, and execution order without executing" }
+              fn metadata(&self) -> ToolMetadata { metadata() }
+              fn input_schema(&self) -> Value {
+                  json!({
+                      "selection": { "type": "string", "enum": ["all", "changed", "dirty", "current", "explicit"] },
+                      "nodes": { "type": "array", "items": { "type": "string" } },
+                      "closure": { "type": "string", "enum": ["self", "upstream", "downstream", "connected", "all"] },
+                      "order": { "type": "string", "enum": ["stable", "providers-first", "consumers-first"] }
+                  })
+              }
+              fn call(&self, input: Value, ctx: &ToolContext) -> Result<Value, ToolFailure> {
+                  let audit_id = ctx.audit.generate_id();
+                  let selection_text = input.get("selection").and_then(Value::as_str).unwrap_or("current");
+                  let selection = stitch::exec::parse_selection_mode(selection_text).map_err(|error| failure(error, &audit_id))?;
+                  let nodes = input.get("nodes").and_then(Value::as_array).map(|values| values.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default();
+                  let closure = stitch::exec::parse_closure_mode(input.get("closure").and_then(Value::as_str).unwrap_or("self")).map_err(|error| failure(error, &audit_id))?;
+                  let order = stitch::exec::parse_order_mode(input.get("order").and_then(Value::as_str).unwrap_or("providers-first")).map_err(|error| failure(error, &audit_id))?;
+                  let config = stitch::config::find_and_load().map_err(|error| failure(error, &audit_id))?;
+                  let plan = stitch::exec::build_scope(&config, &ExecutionScope { selection, explicit_nodes: nodes, closure, order })
+                      .map_err(|error| failure(error, &audit_id))?;
+                  Ok(serde_json::to_value(ToolResult::ok(json!(plan), "ordered repository plan", &audit_id)).unwrap())
+              }
+          }
+          EOF
+
+          cat > modules/package.nix <<'EOF'
+          { lib, ... }: {
+            perSystem = { pkgs, ... }:
+              let
+                source = lib.cleanSource ../.;
+                cargoLock = { lockFile = ../Cargo.lock; };
+                stitchUnwrapped = pkgs.rustPlatform.buildRustPackage {
+                  pname = "stitch";
+                  version = "0.1.0";
+                  src = source;
+                  inherit cargoLock;
+                  cargoBuildFlags = "-p stitch-cli";
+                  nativeBuildInputs = [ pkgs.git ];
+                };
+                stitchMcpUnwrapped = pkgs.rustPlatform.buildRustPackage {
+                  pname = "stitch-mcp";
+                  version = "0.1.0";
+                  src = source;
+                  inherit cargoLock;
+                  cargoBuildFlags = "-p stitch-mcp";
+                  nativeBuildInputs = [ pkgs.git ];
+                };
+                runtime = [ pkgs.git pkgs.nix ];
+                stitch = pkgs.writeShellApplication {
+                  name = "stitch";
+                  runtimeInputs = runtime;
+                  text = ''exec ${stitchUnwrapped}/bin/stitch "$@"'';
+                };
+                stitchMcp = pkgs.writeShellApplication {
+                  name = "stitch-mcp";
+                  runtimeInputs = runtime;
+                  text = ''exec ${stitchMcpUnwrapped}/bin/stitch-mcp "$@"'';
+                };
+              in {
+                packages = {
+                  inherit stitch;
+                  stitch-unwrapped = stitchUnwrapped;
+                  stitch-mcp = stitchMcp;
+                  stitch-mcp-unwrapped = stitchMcpUnwrapped;
+                  default = stitch;
+                };
+                checks = {
+                  stitch-package = stitch;
+                  stitch-mcp-package = stitchMcp;
+                };
+                apps = {
+                  stitch = { type = "app"; program = "${stitch}/bin/stitch"; };
+                  stitch-mcp = { type = "app"; program = "${stitchMcp}/bin/stitch-mcp"; };
+                  default = { type = "app"; program = "${stitch}/bin/stitch"; };
+                };
+                devenv.shells.default = {
+                  imports = [ ../devenv.nix ];
+                  packages = [
+                    stitch
+                    stitchMcp
+                    pkgs.cargo
+                    pkgs.rustc
+                    pkgs.rustfmt
+                    pkgs.clippy
+                    pkgs.rust-analyzer
+                    pkgs.git
+                    pkgs.nix
+                    pkgs.statix
+                    pkgs.deadnix
+                  ];
+                };
+              };
+          }
+          EOF
+
+          cat > devenv.nix <<'EOF'
+          { lib, ... }:
+          let
+            caretakerModules = builtins.filter
+              (path: builtins.baseNameOf path == "caretaker.nix")
+              (lib.filesystem.listFilesRecursive ./.);
+          in {
+            imports = caretakerModules;
+            treefmt = {
+              enable = true;
+              config.programs = { nixfmt.enable = true; rustfmt.enable = true; };
+            };
+            git-hooks.hooks = {
+              treefmt.enable = true;
+              statix.enable = true;
+              deadnix.enable = true;
+              presentable = {
+                enable = true;
+                entry = "devenv test";
+                pass_filenames = false;
+                always_run = true;
+                stages = [ "pre-push" ];
+              };
+            };
+            enterShell = ''
+              echo "phenix-stitch development shell"
+              echo "  check: devenv test"
+              echo "  fix:   devenv tasks run fix"
+            '';
+          }
+          EOF
+
+          cat > crates/caretaker.nix <<'EOF'
+          { ... }: {
+            tasks = {
+              "check:rust-format" = { exec = "cargo fmt --all --check"; before = [ "devenv:enterTest" ]; };
+              "check:rust-compile" = { exec = "cargo check --workspace --all-targets"; before = [ "devenv:enterTest" ]; };
+              "check:rust-clippy" = { exec = "cargo clippy --workspace --all-targets -- -D warnings"; before = [ "devenv:enterTest" ]; };
+              "check:rust-tests" = { exec = "cargo test --workspace"; before = [ "devenv:enterTest" ]; };
+              "fix:rust-format".exec = "cargo fmt --all";
+            };
+          }
+          EOF
+
+          cat > modules/caretaker.nix <<'EOF'
+          { ... }: {
+            tasks = {
+              "check:format" = { exec = "treefmt --fail-on-change"; before = [ "devenv:enterTest" ]; };
+              "check:statix" = { exec = "statix check"; before = [ "devenv:enterTest" ]; };
+              "check:deadnix" = { exec = "deadnix --fail --no-lambda-arg --no-lambda-pattern-names"; before = [ "devenv:enterTest" ]; };
+              "check:flake" = { exec = "nix flake check --print-build-logs --keep-going"; before = [ "devenv:enterTest" ]; };
+              "fix:format".exec = "treefmt";
+              "fix:statix".exec = "statix fix";
+              "fix:deadnix".exec = "deadnix --edit --no-lambda-arg --no-lambda-pattern-names";
+            };
+          }
+          EOF
+
+          cat > README.md <<'EOF'
+          # Stitch
+
+          Stitch derives a repository dependency graph from each repository's `flake.lock` and optional root-local `.stitch.json` declaration, then executes an arbitrary command over a selected closure in a deterministic order.
+
+          ```sh
+          stitch graph verify . --strict
+          stitch exec --all --order providers-first -- git status --short
+          stitch exec --changed --closure downstream --order providers-first -- devenv test
+          stitch exec --all --order consumers-first --apply -- git pull --ff-only
+          ```
+
+          An edge is stored as `consumer -> provider`. Selection (`self`, `upstream`, `downstream`, `connected`, `all`) is independent from execution order (`stable`, `providers-first`, `consumers-first`). Mutating commands require `--apply`. Execution stops at the first failed repository unless `--keep-going` is supplied.
+
+          Repository-local explicit graph metadata is optional:
+
+          ```json
+          {
+            "role": "producer",
+            "layer": 2,
+            "dependencies": ["phenix-pins"]
+          }
+          ```
+
+          Stitch does not know how a repository is tested, formatted, committed, or published. Compose those operations at the command line, for example `stitch exec ... -- devenv test`.
+          EOF
+
+          cat > .github/workflows/ci.yml <<'EOF'
+          name: CI
+          on:
+            pull_request:
+            push:
+              branches: [main]
+          permissions:
+            contents: read
+          jobs:
+            checks:
+              runs-on: ubuntu-latest
+              timeout-minutes: 60
+              steps:
+                - uses: actions/checkout@v5
+                  with: { fetch-depth: 0 }
+                - uses: cachix/install-nix-action@v31
+                  with:
+                    extra_nix_config: |
+                      experimental-features = nix-command flakes
+                      accept-flake-config = true
+                - run: nix flake check --print-build-logs --keep-going
+                - run: nix develop --no-pure-eval --command devenv test
+                - name: Reject retired surfaces
+                  run: |
+                    ! git grep -n -i '\btend\b'
+                    ! git grep -n -E 'workloop|changeset|recipe|hooks install|sync --'
+          EOF
+
+          nix flake update
+          nix develop --no-pure-eval --command cargo fmt --all
+          nix develop --no-pure-eval --command cargo test --workspace
+          nix flake check --print-build-logs --keep-going
+          nix develop --no-pure-eval --command devenv test
+          ! git grep -n -i '\btend\b'
+
+          rm -f .github/workflows/refine-stitch-scope.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "refactor: scope Stitch to ordered repository execution"
+          git push
