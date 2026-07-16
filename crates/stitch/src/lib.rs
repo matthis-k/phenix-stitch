@@ -19,24 +19,11 @@ pub use exec::{
     StepResult,
 };
 pub use graph::{
-    canonical::{CanonicalWorkspaceGraph, CanonicalizeError},
-    derive::{derive_workspace_graph, derive_workspace_graph_from_config},
-    inventory::{discover_inventory, discover_inventory_from_config, WorkspaceDiscovery},
-    lock::parse_flake_lock,
-    planner::{
-        DagPlan, DagPlanRequest, DagPlanner, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
-        PlannedDagNode,
-    },
-    render::RenderFormat,
-    spec::{
-        DagGenerationStrategy, EdgeKind, EdgeSpec, GenerationContext, NodeSpec, StrategyError,
-        WorkspaceGraphDraft,
-    },
-    topo::provider_before_consumer_order,
-    validate::{
-        validate_canonical_graph, validate_graph, DiagnosticSeverity, GraphDiagnostic,
-        GraphValidationReport, ValidateOptions,
-    },
-    EdgeReason, ExternalInput, GraphSource, NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge,
-    WorkspaceNode,
+    derive_workspace_graph, derive_workspace_graph_from_config, discover_inventory,
+    discover_inventory_from_config, parse_flake_lock, provider_before_consumer_order,
+    validate_graph, CanonicalWorkspaceGraph, CanonicalizeError, DagGenerationStrategy, DagPlan,
+    DagPlanRequest, DagPlanner, DiagnosticSeverity, EdgeKind, EdgeSpec, ExternalInput,
+    GenerationContext, GraphDiagnostic, GraphValidationReport, NodeKind, NodeSpec, PlanClosureMode,
+    PlanOrderMode, PlanSelectionMode, PlannedDagNode, RenderFormat, RepoRole, StrategyError,
+    ValidateOptions, WorkspaceDiscovery, WorkspaceGraphDraft,
 };

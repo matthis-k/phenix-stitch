@@ -35,11 +35,7 @@ impl FlakeLocksStrategy {
         discovery: WorkspaceDiscovery,
     ) -> Result<WorkspaceGraphDraft, StrategyError> {
         let aliases = build_workspace_aliases(&discovery.nodes);
-        let nodes: BTreeMap<String, NodeSpec> = discovery
-            .nodes
-            .into_iter()
-            .map(|(id, node)| (id, node.into()))
-            .collect();
+        let nodes: BTreeMap<String, NodeSpec> = discovery.nodes.into_iter().collect();
         let mut draft = WorkspaceGraphDraft::new(nodes);
         let node_ids: Vec<String> = draft.nodes.keys().cloned().collect();
 
@@ -153,13 +149,7 @@ impl DagGenerationStrategy for GitSubmodulesStrategy {
             .find(|n| n.is_root)
             .map(|n| n.id.clone())
             .unwrap_or_else(|| "phenix".to_string());
-        let mut draft = WorkspaceGraphDraft::new(
-            discovery
-                .nodes
-                .into_iter()
-                .map(|(id, node)| (id, node.into()))
-                .collect(),
-        );
+        let mut draft = WorkspaceGraphDraft::new(discovery.nodes.into_iter().collect());
         for node in draft.nodes.values() {
             if node.id == root_id || node.kind == NodeKind::WorkspaceRoot {
                 continue;

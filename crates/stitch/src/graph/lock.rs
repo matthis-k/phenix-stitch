@@ -83,7 +83,7 @@ fn path_basename(path: &str) -> Option<String> {
 
 /// Build a set of aliases for a workspace node id to help with lock matching.
 pub fn build_workspace_aliases(
-    nodes: &BTreeMap<String, super::WorkspaceNode>,
+    nodes: &BTreeMap<String, super::NodeSpec>,
 ) -> BTreeMap<String, String> {
     let mut aliases = BTreeMap::new();
 
@@ -276,14 +276,14 @@ mod tests {
 
     #[test]
     fn test_build_workspace_aliases() {
-        use crate::graph::{NodeKind, RepoRole, WorkspaceNode};
+        use crate::graph::{NodeKind, NodeSpec, RepoRole};
         use std::collections::BTreeMap;
         use std::path::PathBuf;
 
         let mut nodes = BTreeMap::new();
         nodes.insert(
             "phenix-tools".to_string(),
-            WorkspaceNode {
+            NodeSpec {
                 id: "phenix-tools".to_string(),
                 path: PathBuf::from("."),
                 repo_url: Some("git@github.com:matthis-k/phenix-tools.git".to_string()),

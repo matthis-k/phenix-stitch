@@ -899,7 +899,6 @@ fn cmd_loop(command: &LoopCliCommand) -> Result<(), String> {
             let mut wallet = match workloop::load_wallet(&workspace_root, feature) {
                 Ok(wallet) => wallet,
                 Err(_) => workloop::LoopWallet {
-                    schema_version: 2,
                     loop_id: format!("loop-{}", feature),
                     feature: feature.clone(),
                     backend: vcs_backend.clone(),

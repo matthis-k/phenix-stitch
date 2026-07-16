@@ -290,7 +290,7 @@ pub(crate) fn load_canonical_graph(
         return Err(format!("Cannot use invalid Stitch DAG: {messages}"));
     }
 
-    for edge in &dag.edges {
+    for edge in dag.semantic_edges() {
         if !order.contains(&edge.from) || !order.contains(&edge.to) {
             return Err(format!(
                 "Canonical Stitch DAG edge references unknown configured node: {} -> {}",
@@ -299,7 +299,7 @@ pub(crate) fn load_canonical_graph(
         }
     }
 
-    graph::CanonicalWorkspaceGraph::from_legacy(dag).map_err(|e| e.to_string())
+    Ok(dag)
 }
 
 pub struct HookInstallResult {
@@ -1587,7 +1587,6 @@ mod tests {
         std::fs::write(
             stitch_dir.join("topology.json"),
             r#"{
-              "version": 1,
               "workspace": "test",
               "repos": [
                 { "name": "pins", "role": "pins", "layer": 0 },
@@ -1600,7 +1599,6 @@ mod tests {
         .unwrap();
 
         WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![
                 crate::model::RepoConfig {

@@ -158,7 +158,6 @@ mod tests {
 
         let path_str = repo_path.to_string_lossy().to_string();
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![RepoConfig {
                 name: "test-repo".to_string(),
@@ -169,7 +168,6 @@ mod tests {
         };
 
         let cs = Changeset {
-            version: 1,
             id: "test-cs".to_string(),
             title: "Test".to_string(),
             workspace: "test".to_string(),
@@ -200,7 +198,6 @@ mod tests {
             .to_string_lossy()
             .to_string();
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![RepoConfig {
                 name: "ghost-repo".to_string(),
@@ -211,7 +208,6 @@ mod tests {
         };
 
         let cs = Changeset {
-            version: 1,
             id: "test-cs".to_string(),
             title: "Test".to_string(),
             workspace: "test".to_string(),

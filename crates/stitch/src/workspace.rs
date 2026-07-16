@@ -45,8 +45,8 @@ impl Default for WorkspaceDiscoveryPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceState {
-    pub version: u32,
     #[serde(default)]
     pub discovery: WorkspaceDiscoveryPolicy,
     #[serde(default)]
@@ -92,7 +92,6 @@ pub fn load_workspace_config_with_policy(
     repos.extend(discovered.into_values());
 
     Ok(WorkspaceConfig {
-        version: 2,
         workspace,
         repos,
         config_dir: Some(root),

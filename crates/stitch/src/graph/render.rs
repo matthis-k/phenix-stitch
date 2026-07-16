@@ -1,4 +1,4 @@
-use crate::graph::{validate::GraphValidationReport, WorkspaceDag};
+use crate::graph::{validate::GraphValidationReport, CanonicalWorkspaceGraph, WorkspaceGraphDraft};
 use crate::model::WorkspaceConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,12 +8,30 @@ pub enum RenderFormat {
     Mermaid,
 }
 
-pub fn render_graph_derive(graph: &WorkspaceDag, format: RenderFormat) -> Result<String, String> {
+fn render_graph_snapshot(
+    graph: &WorkspaceGraphDraft,
+    format: RenderFormat,
+) -> Result<String, String> {
     match format {
         RenderFormat::Json => render_graph_json(graph),
         RenderFormat::Text => render_graph_text(graph),
         RenderFormat::Mermaid => render_graph_mermaid(graph),
     }
+}
+
+pub fn render_graph_derive(
+    graph: &CanonicalWorkspaceGraph,
+    format: RenderFormat,
+) -> Result<String, String> {
+    render_graph_snapshot(&graph.to_snapshot(), format)
+}
+
+pub fn render_order(
+    graph: &CanonicalWorkspaceGraph,
+    order: &[String],
+    format: RenderFormat,
+) -> Result<String, String> {
+    render_order_snapshot(&graph.to_snapshot(), order, format)
 }
 
 pub fn render_validation_report(
@@ -27,8 +45,8 @@ pub fn render_validation_report(
     }
 }
 
-pub fn render_order(
-    graph: &WorkspaceDag,
+fn render_order_snapshot(
+    graph: &WorkspaceGraphDraft,
     order: &[String],
     format: RenderFormat,
 ) -> Result<String, String> {
@@ -165,8 +183,7 @@ pub fn operation_dag_json(
         let metadata = metadata.exists().then_some(metadata);
         let graph = crate::graph::derive::derive_workspace_graph(root, metadata.as_deref())
             .map_err(|e| format!("Workspace graph evidence failed: {e}"))?;
-        let canonical =
-            crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).map_err(|e| e.to_string())?;
+        let canonical = graph;
         let stable_order = cfg.repos.iter().map(|r| r.name.clone()).collect();
         let plan =
             crate::graph::DagPlanner::new(&canonical).plan(&crate::graph::DagPlanRequest {
@@ -198,7 +215,7 @@ pub fn operation_dag_json(
     )
 }
 
-fn render_graph_text(graph: &WorkspaceDag) -> Result<String, String> {
+fn render_graph_text(graph: &WorkspaceGraphDraft) -> Result<String, String> {
     let mut out = String::new();
 
     out.push_str("Workspace DAG:\n\n");
@@ -221,11 +238,12 @@ fn render_graph_text(graph: &WorkspaceDag) -> Result<String, String> {
     } else {
         out.push_str("\nEdges:\n");
         for edge in &graph.edges {
-            let reason = match &edge.reason {
-                super::EdgeReason::FlakeInput { input_name, .. } => {
+            let reason = match &edge.kind {
+                super::EdgeKind::FlakeInput { input_name, .. } => {
                     format!("input={input_name}")
                 }
-                super::EdgeReason::Manual { .. } => "manual".to_string(),
+                super::EdgeKind::Manual { .. } => "manual".to_string(),
+                super::EdgeKind::SubmoduleMembership { .. } => "submodule-membership".to_string(),
             };
             out.push_str(&format!(
                 "  {:<20} -> {:<20}  {reason}\n",
@@ -247,11 +265,11 @@ fn render_graph_text(graph: &WorkspaceDag) -> Result<String, String> {
     Ok(out)
 }
 
-fn render_graph_json(graph: &WorkspaceDag) -> Result<String, String> {
+fn render_graph_json(graph: &WorkspaceGraphDraft) -> Result<String, String> {
     serde_json::to_string_pretty(graph).map_err(|e| format!("JSON serialization: {e}"))
 }
 
-fn render_graph_mermaid(graph: &WorkspaceDag) -> Result<String, String> {
+fn render_graph_mermaid(graph: &WorkspaceGraphDraft) -> Result<String, String> {
     let mut out = String::new();
     out.push_str("flowchart TD\n");
 
@@ -320,7 +338,7 @@ fn render_validation_mermaid(report: &GraphValidationReport) -> Result<String, S
     Ok(out)
 }
 
-fn render_order_text(order: &[String], graph: &WorkspaceDag) -> Result<String, String> {
+fn render_order_text(order: &[String], graph: &WorkspaceGraphDraft) -> Result<String, String> {
     let mut out = String::new();
     out.push_str("Provider-before-consumer order:\n");
     for (i, id) in order.iter().enumerate() {
@@ -340,7 +358,7 @@ fn render_order_json(order: &[String]) -> Result<String, String> {
         .map_err(|e| format!("JSON serialization: {e}"))
 }
 
-fn render_order_mermaid(graph: &WorkspaceDag, order: &[String]) -> Result<String, String> {
+fn render_order_mermaid(graph: &WorkspaceGraphDraft, order: &[String]) -> Result<String, String> {
     let mut out = String::new();
     out.push_str("flowchart LR\n");
     out.push_str("  subgraph Order[Provider-before-consumer order]\n");
@@ -364,7 +382,7 @@ fn mermaid_id(id: &str) -> String {
     id.replace(['-', '.'], "_")
 }
 
-fn mermaid_label(node: &super::WorkspaceNode) -> String {
+fn mermaid_label(node: &super::NodeSpec) -> String {
     let layer = node
         .layer
         .map(|l| format!("layer {l}"))

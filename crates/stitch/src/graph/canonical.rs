@@ -4,7 +4,6 @@ use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 use petgraph::visit::IntoEdgeReferences;
 
 use crate::graph::spec::{EdgeSpec, NodeSpec, WorkspaceGraphDraft};
-use crate::graph::{WorkspaceDag, WorkspaceEdge};
 
 #[derive(Debug, Clone)]
 pub struct CanonicalWorkspaceGraph {
@@ -70,10 +69,6 @@ impl CanonicalWorkspaceGraph {
         })
     }
 
-    pub fn from_legacy(graph: WorkspaceDag) -> Result<Self, CanonicalizeError> {
-        Self::from_draft(graph.into())
-    }
-
     pub fn stable_graph(&self) -> &StableDiGraph<NodeSpec, EdgeSpec> {
         &self.graph
     }
@@ -114,59 +109,24 @@ impl CanonicalWorkspaceGraph {
             .collect()
     }
 
-    pub fn to_legacy_dag(&self) -> WorkspaceDag {
+    pub(crate) fn to_snapshot(&self) -> WorkspaceGraphDraft {
         let nodes = self
             .id_to_index
             .iter()
-            .filter_map(|(id, idx)| {
+            .filter_map(|(id, index)| {
                 self.graph
-                    .node_weight(*idx)
+                    .node_weight(*index)
                     .cloned()
-                    .map(|node| (id.clone(), node.into()))
+                    .map(|node| (id.clone(), node))
             })
             .collect();
-        let edges: Vec<WorkspaceEdge> = self
-            .graph
-            .edge_references()
-            .filter_map(|edge| WorkspaceEdge::try_from(edge.weight().clone()).ok())
-            .collect();
-        WorkspaceDag {
+        let edges = self.graph.edge_weights().cloned().collect();
+        WorkspaceGraphDraft {
             nodes,
             edges,
             external_inputs: self.external_inputs.clone(),
             diagnostics: self.diagnostics.clone(),
         }
-    }
-
-    pub fn to_legacy_workspace_graph(&self, root: String) -> crate::graph::WorkspaceGraph {
-        let nodes = self
-            .id_to_index
-            .iter()
-            .filter_map(|(id, idx)| {
-                self.graph.node_weight(*idx).map(|node| {
-                    (
-                        id.clone(),
-                        crate::graph::FlakeNode {
-                            id: id.clone(),
-                            name: id.clone(),
-                            path: node.path.clone(),
-                            remote: node.repo_url.clone(),
-                            branch: "main".to_string(),
-                        },
-                    )
-                })
-            })
-            .collect();
-        let edges = self
-            .semantic_edges()
-            .into_iter()
-            .filter_map(|edge| {
-                edge.input_name().map(|input_name| {
-                    crate::graph::DependencyEdge::new(&edge.from, &edge.to, input_name)
-                })
-            })
-            .collect();
-        crate::graph::WorkspaceGraph { root, nodes, edges }
     }
 
     pub fn flake_input_names_for_direct_dependencies(

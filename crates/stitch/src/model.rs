@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceConfig {
-    pub version: u32,
     pub workspace: String,
     pub repos: Vec<RepoConfig>,
     #[serde(skip)]
@@ -33,8 +33,8 @@ impl RepoConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Changeset {
-    pub version: u32,
     pub id: String,
     pub title: String,
     pub workspace: String,
@@ -204,5 +204,21 @@ mod tests {
     fn test_add_trailers_trailing_newline() {
         let result = add_trailers("feat: add widget\n", "cs-001", "phenix");
         assert!(result.contains("Change-Set: cs-001"));
+    }
+
+    #[test]
+    fn retired_version_selectors_are_rejected() {
+        let workspace = r#"{"version":1,"workspace":"test","repos":[]}"#;
+        assert!(serde_json::from_str::<WorkspaceConfig>(workspace).is_err());
+
+        let changeset = r#"{
+            "version": 1,
+            "id": "test",
+            "title": "Test",
+            "workspace": "test",
+            "state": "Planned",
+            "repos": []
+        }"#;
+        assert!(serde_json::from_str::<Changeset>(changeset).is_err());
     }
 }

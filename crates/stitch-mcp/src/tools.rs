@@ -494,7 +494,6 @@ impl McpTool for StitchWorkspaceDiscoverTool {
         let result = ToolResult::ok(
             json!({
                 "workspace": cfg.workspace,
-                "version": cfg.version,
                 "state_file": stitch::workspace::state_file(&cfg.workspace),
                 "repos": repos,
                 "total": repos.len()
@@ -1521,7 +1520,6 @@ impl McpTool for StitchLoopCheckpointTool {
         let mut wallet = match workloop::load_wallet(workspace_root, feature) {
             Ok(w) => w,
             Err(_) => workloop::LoopWallet {
-                schema_version: 2,
                 loop_id: format!("loop-{}", feature),
                 feature: feature.to_string(),
                 backend: vcs_backend.clone(),
@@ -2086,7 +2084,6 @@ mod tests {
     #[test]
     fn read_only_exec_options_capture_step_output() {
         let cfg = stitch::model::WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: Vec::new(),
             config_dir: None,

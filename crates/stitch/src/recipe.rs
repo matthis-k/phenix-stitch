@@ -20,8 +20,8 @@ const KNOWN_BUILTINS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecipeCollection {
-    pub version: u32,
     pub recipes: Vec<RecipeDef>,
 }
 
@@ -72,7 +72,6 @@ pub fn load_recipes(root: &Path) -> Result<RecipeCollection, String> {
     let recipes_path = root.join(".stitch").join("recipes.json");
     if !recipes_path.exists() {
         return Ok(RecipeCollection {
-            version: 1,
             recipes: Vec::new(),
         });
     }
@@ -80,9 +79,6 @@ pub fn load_recipes(root: &Path) -> Result<RecipeCollection, String> {
         .map_err(|e| format!("Failed to read {}: {}", recipes_path.display(), e))?;
     let collection: RecipeCollection = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse {}: {}", recipes_path.display(), e))?;
-    if collection.version < 1 {
-        return Err(format!("Unsupported recipe version {}", collection.version));
-    }
     Ok(collection)
 }
 

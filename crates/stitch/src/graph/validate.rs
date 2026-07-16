@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge, WorkspaceNode};
+use crate::graph::{EdgeSpec, NodeKind, NodeSpec, RepoRole, WorkspaceGraphDraft};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiagnosticSeverity {
@@ -18,7 +18,7 @@ pub struct GraphDiagnostic {
     pub code: String,
     pub message: String,
     pub nodes: Vec<String>,
-    pub edge: Option<WorkspaceEdge>,
+    pub edge: Option<EdgeSpec>,
 }
 
 impl GraphDiagnostic {
@@ -66,7 +66,7 @@ pub struct GraphValidationReport {
     pub edge_count: usize,
 }
 
-pub fn validate_graph(graph: &WorkspaceDag, opts: &ValidateOptions) -> GraphValidationReport {
+fn validate_snapshot(graph: &WorkspaceGraphDraft, opts: &ValidateOptions) -> GraphValidationReport {
     let mut diagnostics = Vec::new();
 
     // 1. Check for unknowns in edges
@@ -289,17 +289,17 @@ pub fn validate_graph(graph: &WorkspaceDag, opts: &ValidateOptions) -> GraphVali
     }
 }
 
-pub fn validate_canonical_graph(
+pub fn validate_graph(
     graph: &crate::graph::CanonicalWorkspaceGraph,
     opts: &ValidateOptions,
 ) -> GraphValidationReport {
-    validate_graph(&graph.to_legacy_dag(), opts)
+    validate_snapshot(&graph.to_snapshot(), opts)
 }
 
 fn validate_role_edge(
-    from: &WorkspaceNode,
-    to: &WorkspaceNode,
-    _edge: &WorkspaceEdge,
+    from: &NodeSpec,
+    to: &NodeSpec,
+    _edge: &EdgeSpec,
     diagnostics: &mut Vec<GraphDiagnostic>,
 ) {
     // Only check non-root edges
@@ -402,7 +402,7 @@ enum Mark {
     Permanent,
 }
 
-fn find_cycle(graph: &WorkspaceDag) -> Option<Vec<String>> {
+fn find_cycle(graph: &WorkspaceGraphDraft) -> Option<Vec<String>> {
     let mut marks: BTreeMap<String, Mark> = BTreeMap::new();
     let mut stack: Vec<String> = Vec::new();
 
@@ -419,7 +419,7 @@ fn find_cycle(graph: &WorkspaceDag) -> Option<Vec<String>> {
 
 fn visit(
     node: &str,
-    graph: &WorkspaceDag,
+    graph: &WorkspaceGraphDraft,
     marks: &mut BTreeMap<String, Mark>,
     stack: &mut Vec<String>,
 ) -> Option<Vec<String>> {
@@ -451,7 +451,7 @@ fn visit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{EdgeReason, NodeKind, RepoRole};
+    use crate::graph::{EdgeKind, NodeKind, RepoRole};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -461,8 +461,8 @@ mod tests {
         role: RepoRole,
         layer: Option<u32>,
         is_root: bool,
-    ) -> WorkspaceNode {
-        WorkspaceNode {
+    ) -> NodeSpec {
+        NodeSpec {
             id: id.to_string(),
             path: PathBuf::new(),
             repo_url: None,
@@ -473,22 +473,22 @@ mod tests {
         }
     }
 
-    fn make_edge(from: &str, to: &str) -> WorkspaceEdge {
-        WorkspaceEdge {
+    fn make_edge(from: &str, to: &str) -> EdgeSpec {
+        EdgeSpec {
             from: from.to_string(),
             to: to.to_string(),
-            reason: EdgeReason::Manual {
+            kind: EdgeKind::Manual {
                 source_file: PathBuf::from("test"),
             },
         }
     }
 
-    fn make_graph(nodes: Vec<WorkspaceNode>, edges: Vec<WorkspaceEdge>) -> WorkspaceDag {
+    fn make_graph(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>) -> WorkspaceGraphDraft {
         let mut node_map = BTreeMap::new();
         for n in nodes {
             node_map.insert(n.id.clone(), n);
         }
-        WorkspaceDag {
+        WorkspaceGraphDraft {
             nodes: node_map,
             edges,
             external_inputs: Vec::new(),
@@ -496,7 +496,7 @@ mod tests {
         }
     }
 
-    fn make_node_old(id: &str, kind: NodeKind, layer: Option<u32>, is_root: bool) -> WorkspaceNode {
+    fn make_node_old(id: &str, kind: NodeKind, layer: Option<u32>, is_root: bool) -> NodeSpec {
         let role = match kind {
             NodeKind::Pins => RepoRole::Pins,
             NodeKind::PackageProvider => RepoRole::PkgsAggregator,
@@ -524,7 +524,7 @@ mod tests {
             make_edge("c", "a"),
         ];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -540,7 +540,7 @@ mod tests {
         ];
         let edges = vec![make_edge("pins", "hosts")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(report
             .diagnostics
             .iter()
@@ -555,7 +555,7 @@ mod tests {
         ];
         let edges = vec![make_edge("hosts", "pins")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report
             .diagnostics
             .iter()
@@ -570,7 +570,7 @@ mod tests {
         ];
         let edges = vec![make_edge("hosts", "pins")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report
             .diagnostics
             .iter()
@@ -586,7 +586,7 @@ mod tests {
         ];
         let edges = vec![make_edge("phenix-tools", "phenix")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -615,7 +615,7 @@ mod tests {
         ];
         let edges = vec![make_edge("tools", "pins"), make_edge("tools", "nvim")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -643,7 +643,7 @@ mod tests {
         ];
         let edges = vec![make_edge("tools", "pkgs")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -676,19 +676,19 @@ mod tests {
             make_edge("phenix", "phenix-hosts"),
         ];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(report.valid);
     }
 
     #[test]
-    fn test_validate_canonical_graph_preserves_rule_coverage() {
+    fn test_validate_graph_preserves_rule_coverage() {
         let nodes = vec![
             make_node_old("hosts", NodeKind::HostConsumer, Some(5), false),
             make_node_old("pins", NodeKind::Pins, Some(0), false),
         ];
         let graph = make_graph(nodes, vec![make_edge("hosts", "pins")]);
-        let canonical = crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).unwrap();
-        let report = validate_canonical_graph(&canonical, &ValidateOptions::default());
+        let canonical = crate::graph::CanonicalWorkspaceGraph::from_draft(graph).unwrap();
+        let report = validate_graph(&canonical, &ValidateOptions::default());
         assert!(report.valid);
         assert_eq!(report.edge_count, 1);
     }
@@ -701,7 +701,7 @@ mod tests {
         ];
         let edges = vec![make_edge("a", "b"), make_edge("b", "a")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         let cycle_diag = report
             .diagnostics
             .iter()
@@ -749,13 +749,13 @@ mod tests {
             node_map.insert(n.id.clone(), n);
         }
         let edges = vec![make_edge("phenix-host", "pins")];
-        let graph = WorkspaceDag {
+        let graph = WorkspaceGraphDraft {
             nodes: node_map,
             edges,
             external_inputs: Vec::new(),
             diagnostics: Vec::new(),
         };
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -784,13 +784,13 @@ mod tests {
             node_map.insert(n.id.clone(), n);
         }
         let edges = vec![make_edge("phenix-host", "pins")];
-        let graph = WorkspaceDag {
+        let graph = WorkspaceGraphDraft {
             nodes: node_map,
             edges,
             external_inputs: Vec::new(),
             diagnostics: Vec::new(),
         };
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(report.valid);
         assert!(!report
             .diagnostics
@@ -813,13 +813,13 @@ mod tests {
             n.path = PathBuf::from("flakes/00-pins/phenix"); // non-root layer in path
             node_map.insert(n.id.clone(), n);
         }
-        let graph = WorkspaceDag {
+        let graph = WorkspaceGraphDraft {
             nodes: node_map,
             edges: Vec::new(),
             external_inputs: Vec::new(),
             diagnostics: Vec::new(),
         };
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         // Root should not trigger path_layer_mismatch
         assert!(!report
             .diagnostics
@@ -843,7 +843,7 @@ mod tests {
         ];
         let edges = vec![make_edge("tools-a", "tools-b")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -863,7 +863,7 @@ mod tests {
             make_edge("layer2-b", "layer2-a"),
         ];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         let layer_violations: Vec<_> = report
             .diagnostics
@@ -880,7 +880,7 @@ mod tests {
     #[test]
     fn test_url_mismatch_detected() {
         // Node id "phenix-tools" but URL points to a different repo
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "phenix-tools".to_string(),
             path: PathBuf::from("flakes/02-producers/phenix-tools"),
             repo_url: Some("https://github.com/other-org/wrong-repo.git".to_string()),
@@ -890,7 +890,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
     }
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn test_url_mismatch_ssh_style() {
         // SSH-style URL with wrong repo name
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "phenix-tools".to_string(),
             path: PathBuf::from("flakes/02-producers/phenix-tools"),
             repo_url: Some("git@github.com:other-org/wrong-repo.git".to_string()),
@@ -908,7 +908,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
     }
@@ -916,7 +916,7 @@ mod tests {
     #[test]
     fn test_url_mismatch_ok() {
         // URL matches node id
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "phenix-tools".to_string(),
             path: PathBuf::from("flakes/02-producers/phenix-tools"),
             repo_url: Some("https://github.com/matthis-k/phenix-tools.git".to_string()),
@@ -926,7 +926,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(report.valid);
         assert!(!report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
     }
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn test_url_mismatch_ok_ssh() {
         // SSH-style URL matching
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "phenix-tools".to_string(),
             path: PathBuf::from("flakes/02-producers/phenix-tools"),
             repo_url: Some("git@github.com:matthis-k/phenix-tools.git".to_string()),
@@ -944,7 +944,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(report.valid);
         assert!(!report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
     }
@@ -952,7 +952,7 @@ mod tests {
     #[test]
     fn test_url_mismatch_ok_no_git_suffix() {
         // URL without .git suffix
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "phenix-host".to_string(),
             path: PathBuf::from("flakes/05-consumers/phenix-host"),
             repo_url: Some("https://github.com/matthis-k/phenix-host".to_string()),
@@ -962,7 +962,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(report.valid);
         assert!(!report.diagnostics.iter().any(|d| d.code == "url_mismatch"));
     }
@@ -974,7 +974,7 @@ mod tests {
     #[test]
     fn test_missing_repo_path_detected() {
         // Path does not exist on disk
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "phenix-tools".to_string(),
             path: PathBuf::from("/tmp/__stitch_test_nonexistent_path_that_should_not_exist__"),
             repo_url: None,
@@ -984,7 +984,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report
             .diagnostics
             .iter()
@@ -1001,7 +1001,7 @@ mod tests {
         // Nodes with empty path (PathBuf::new()) must not trigger the check
         let nodes = vec![make_node_old("pins", NodeKind::Pins, Some(0), false)];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report
             .diagnostics
             .iter()
@@ -1013,7 +1013,7 @@ mod tests {
         // Path exists as a temp directory — must pass
         let dir = tempfile::tempdir().expect("tempdir creation");
         let path = dir.path().to_path_buf();
-        let nodes = vec![WorkspaceNode {
+        let nodes = vec![NodeSpec {
             id: "existing-repo".to_string(),
             path,
             repo_url: None,
@@ -1023,7 +1023,7 @@ mod tests {
             is_root: false,
         }];
         let graph = make_graph(nodes, Vec::new());
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report
             .diagnostics
             .iter()
@@ -1137,7 +1137,7 @@ mod tests {
 
         let mut nodes = Vec::new();
         for (id, kind, role, layer, path, url, is_root) in &node_specs {
-            nodes.push(WorkspaceNode {
+            nodes.push(NodeSpec {
                 id: id.to_string(),
                 path: PathBuf::from(path),
                 repo_url: url.map(|s| s.to_string()),
@@ -1159,7 +1159,7 @@ mod tests {
         ];
 
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(
             report.valid,
             "Expected valid workspace, got diagnostics: {:#?}",
@@ -1186,7 +1186,7 @@ mod tests {
             make_edge("consumer", "provider"),
         ];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         let dups: Vec<_> = report
             .diagnostics
             .iter()
@@ -1200,7 +1200,7 @@ mod tests {
         let nodes = vec![make_node_old("known", NodeKind::Pins, Some(0), false)];
         let edges = vec![make_edge("unknown", "known")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -1213,7 +1213,7 @@ mod tests {
         let nodes = vec![make_node_old("known", NodeKind::Pins, Some(0), false)];
         let edges = vec![make_edge("known", "unknown")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         assert!(!report.valid);
         assert!(report
             .diagnostics
@@ -1230,7 +1230,7 @@ mod tests {
         ];
         let edges = vec![make_edge("a", "b")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions { strict: true });
+        let report = validate_snapshot(&graph, &ValidateOptions { strict: true });
         let missing: Vec<_> = report
             .diagnostics
             .iter()
@@ -1249,7 +1249,7 @@ mod tests {
         ];
         let edges = vec![make_edge("a", "b")];
         let graph = make_graph(nodes, edges);
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         let missing: Vec<_> = report
             .diagnostics
             .iter()
@@ -1283,7 +1283,7 @@ mod tests {
         ];
         let mut graph = make_graph(nodes, Vec::new());
         graph.external_inputs = external_inputs;
-        let report = validate_graph(&graph, &ValidateOptions::default());
+        let report = validate_snapshot(&graph, &ValidateOptions::default());
         let multi: Vec<_> = report
             .diagnostics
             .iter()
