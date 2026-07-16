@@ -1,0 +1,44 @@
+name: Run queued maintenance
+on: { pull_request: {} }
+permissions: { contents: write }
+jobs:
+  run:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: main, fetch-depth: 0 }
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Correct and execute queued scope migration
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/repair-refine-workflow.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/refine-stitch-scope.yml')
+          s = p.read_text()
+          s = s.replace('use stitch::exec::{ExecutionScope, SelectionMode};', 'use stitch::exec::ExecutionScope;')
+          s = s.replace('ExecutionReport, ExecutionScope, OrderMode, RunOptions, SelectionMode,', 'ExecutionReport, ExecutionScope, RunOptions, SelectionMode,')
+          s = s.replace("          ! git grep -n -i '\\btend\\b'\n\n          rm -f .github/workflows/refine-stitch-scope.yml", "          rm -f .github/workflows/refine-stitch-scope.yml\n          ! git grep -n -i '\\btend\\b'")
+          p.write_text(s)
+          PY
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import subprocess, yaml
+          data = yaml.safe_load(open('.github/workflows/refine-stitch-scope.yml'))
+          for step in data['jobs']['migrate']['steps']:
+              if step.get('run'):
+                  subprocess.run(step['run'], shell=True, executable='/bin/bash', check=True)
+          PY
+      - name: Remove maintenance trigger
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/run-maintenance.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A && git commit -m "chore: remove temporary maintenance trigger" && git push origin main
