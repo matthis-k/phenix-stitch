@@ -129,36 +129,6 @@ impl CanonicalWorkspaceGraph {
         }
     }
 
-    pub(crate) fn to_sync_graph(&self, root: String) -> crate::graph::SyncGraph {
-        let nodes = self
-            .id_to_index
-            .iter()
-            .filter_map(|(id, idx)| {
-                self.graph.node_weight(*idx).map(|node| {
-                    (
-                        id.clone(),
-                        crate::graph::SyncNode {
-                            id: id.clone(),
-                            name: id.clone(),
-                            path: node.path.clone(),
-                            remote: node.repo_url.clone(),
-                            branch: "main".to_string(),
-                        },
-                    )
-                })
-            })
-            .collect();
-        let edges = self
-            .semantic_edges()
-            .into_iter()
-            .filter_map(|edge| {
-                edge.input_name()
-                    .map(|input_name| crate::graph::SyncEdge::new(&edge.from, &edge.to, input_name))
-            })
-            .collect();
-        crate::graph::SyncGraph { root, nodes, edges }
-    }
-
     pub fn flake_input_names_for_direct_dependencies(
         &self,
         node_id: &str,
