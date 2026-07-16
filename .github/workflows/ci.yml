@@ -2,25 +2,27 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  migrate:
-    name: Update Tend contract
+  checks:
+    name: Tend CI profile
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
-      - name: Check out PR branch
+      - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
       - name: Install Nix
@@ -28,17 +30,36 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update Tend lock and configuration
+      - name: Run read-only Tend CI profile
+        id: tend
         shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          set -euo pipefail
-          nix --accept-flake-config flake update phenix-tend
-          sed -i '/^[[:space:]]*"version":[[:space:]]*[0-9][0-9]*,[[:space:]]*$/d' .tend.json
-          if git diff --quiet -- flake.lock .tend.json; then
-            exit 0
+          set +e
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            BASE_SHA="$HEAD_SHA^"
           fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add flake.lock .tend.json
-          git commit -m "chore: update Tend contract"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          nix develop --command tend check \
+            --profile ci \
+            --context ci \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            > tend-ci.log 2>&1
+          status=$?
+          cat tend-ci.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Tend diagnostics
+        if: steps.tend.outputs.status != '0'
+        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
+        with:
+          name: stitch-tend-ci-diagnostics
+          path: tend-ci.log
+          if-no-files-found: error
+
+      - name: Fail when Tend checks fail
+        if: steps.tend.outputs.status != '0'
+        run: exit 1
