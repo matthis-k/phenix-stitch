@@ -16,8 +16,8 @@ jobs:
             accept-flake-config = true
       - name: Correct and execute queued scope migration
         run: |
-          set -euo pipefail
-          rm -f .github/workflows/repair-refine-workflow.yml
+          set -uo pipefail
+          rm -f .maintenance-failure.log .github/workflows/repair-refine-workflow.yml
           python3 - <<'PY'
           from pathlib import Path
           p = Path('.github/workflows/refine-stitch-scope.yml')
@@ -27,14 +27,23 @@ jobs:
           s = s.replace("          ! git grep -n -i '\\btend\\b'\n\n          rm -f .github/workflows/refine-stitch-scope.yml", "          rm -f .github/workflows/refine-stitch-scope.yml\n          ! git grep -n -i '\\btend\\b'")
           p.write_text(s)
           PY
-          python3 -m pip install --quiet pyyaml
-          python3 - <<'PY'
-          import subprocess, yaml
-          data = yaml.safe_load(open('.github/workflows/refine-stitch-scope.yml'))
-          for step in data['jobs']['migrate']['steps']:
-              if step.get('run'):
-                  subprocess.run(step['run'], shell=True, executable='/bin/bash', check=True)
-          PY
+          sed -n '/^        run: |$/,$p' .github/workflows/refine-stitch-scope.yml | tail -n +2 | sed 's/^          //' > /tmp/migrate.sh
+          sed -i '/^nix flake update$/i git add -A' /tmp/migrate.sh
+          set +e
+          bash /tmp/migrate.sh 2>&1 | tee /tmp/maintenance.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if (( status != 0 )); then
+            git reset --hard HEAD
+            git clean -fdx
+            tail -n 400 /tmp/maintenance.log > .maintenance-failure.log
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add .maintenance-failure.log
+            git commit -m "ci: capture scoped Stitch migration failure"
+            git push origin main
+            exit "$status"
+          fi
       - name: Remove maintenance trigger
         run: |
           set -euo pipefail
