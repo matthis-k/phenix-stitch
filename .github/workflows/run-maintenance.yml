@@ -27,8 +27,25 @@ jobs:
           s = s.replace("          ! git grep -n -i '\\btend\\b'\n\n          rm -f .github/workflows/refine-stitch-scope.yml", "          rm -f .github/workflows/refine-stitch-scope.yml\n          ! git grep -n -i '\\btend\\b'")
           p.write_text(s)
           PY
+          cat > /tmp/patch-devenv-inputs.py <<'PY'
+          from pathlib import Path
+          path = Path("flake.nix")
+          text = path.read_text()
+          if "devenv-root" not in text:
+              marker = "inputs = {"
+              index = text.index(marker)
+              line_end = text.index("\n", index) + 1
+              indent = text[text.rfind("\n", 0, index) + 1:index]
+              child = indent + "  "
+              addition = (
+                  f'{child}devenv-root = {{ url = "file+file:///dev/null"; flake = false; }};\n'
+                  f'{child}nix2container = {{\n{child}  url = "github:nlewo/nix2container";\n{child}  inputs.nixpkgs.follows = "nixpkgs";\n{child}}};\n'
+                  f'{child}mk-shell-bin.url = "github:rrbutani/nix-mk-shell-bin";\n'
+              )
+              path.write_text(text[:line_end] + addition + text[line_end:])
+          PY
           sed -n '/^        run: |$/,$p' .github/workflows/refine-stitch-scope.yml | tail -n +2 | sed 's/^          //' > /tmp/migrate.sh
-          sed -i '/^nix flake update$/i git add -A' /tmp/migrate.sh
+          sed -i '/^nix flake update$/i python3 /tmp/patch-devenv-inputs.py\ngit add -A' /tmp/migrate.sh
           set +e
           bash /tmp/migrate.sh 2>&1 | tee /tmp/maintenance.log
           status=${PIPESTATUS[0]}
@@ -36,7 +53,7 @@ jobs:
           if (( status != 0 )); then
             git reset --hard HEAD
             git clean -fdx
-            tail -n 400 /tmp/maintenance.log > .maintenance-failure.log
+            tail -n 500 /tmp/maintenance.log > .maintenance-failure.log
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add .maintenance-failure.log
