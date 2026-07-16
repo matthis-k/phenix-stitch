@@ -8,6 +8,7 @@ intentionally not accepted or migrated; Git history is their only archive.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,22 @@ def remove_literal(path: str | Path, text: str) -> None:
 def remove_regex(path: str | Path, pattern: str) -> None:
     rewrite(path, lambda source: re.sub(pattern, "", source, flags=re.MULTILINE))
 
+
+# A previous broad fixture rewrite crossed raw-string boundaries. Restore the
+# affected files from main, then apply only line-bounded current-shape edits.
+subprocess.run(
+    [
+        "git",
+        "checkout",
+        "origin/main",
+        "--",
+        "crates/phenix-mcp-core/src/mcp.rs",
+        "crates/stitch/src/exec.rs",
+        "crates/stitch/src/workspace.rs",
+    ],
+    cwd=ROOT,
+    check=True,
+)
 
 # Type definitions and primary constructors.
 for path in [
@@ -60,12 +77,13 @@ for path in [
 ]:
     remove_regex(path, r"^\s*(?:schema_version|version):\s*\d+,\n")
 
-# Remove JSON schema selectors from all Stitch-owned Rust fixtures. The flake
-# lock parser is excluded because the Nix lock-file version belongs to Nix.
-for path in (ROOT / "crates").rglob("*.rs"):
-    if path == ROOT / "crates/stitch/src/graph/lock.rs":
-        continue
-    remove_regex(path.relative_to(ROOT), r'^\s*"(?:schema_version|version)":\s*[^,]+,\n')
+# Remove only comma-terminated Stitch JSON schema selectors. This deliberately
+# preserves Nix flake.lock's protocol-owned final `version` property.
+for path in [
+    "crates/stitch/src/exec.rs",
+    "crates/stitch/src/graph/inventory.rs",
+]:
+    remove_regex(path, r'^\s*"(?:schema_version|version)":\s*[^\n,]+,\n')
 
 # Remove the obsolete version property from MCP output.
 remove_regex(
@@ -74,7 +92,7 @@ remove_regex(
 )
 
 # Reject accidental reintroduction in persisted contracts. CLI `--version`
-# flags and protocol-owned server/package versions are intentionally unrelated.
+# flags and protocol-owned server/package/flake-lock versions are unrelated.
 contract_files = [
     ROOT / "crates/stitch/src/model.rs",
     ROOT / "crates/stitch/src/workspace.rs",
@@ -85,7 +103,7 @@ contract_files = [
 field_pattern = re.compile(
     r'^\s*(?:pub\s+)?(?:schema_version|version)\s*:', re.MULTILINE
 )
-json_pattern = re.compile(r'^\s*"(?:schema_version|version)"\s*:', re.MULTILINE)
+json_pattern = re.compile(r'^\s*"(?:schema_version|version)"\s*[^\n]*,', re.MULTILINE)
 for path in contract_files:
     text = path.read_text()
     if field_pattern.search(text) or json_pattern.search(text):
