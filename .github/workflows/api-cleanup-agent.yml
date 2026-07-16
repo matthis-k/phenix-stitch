@@ -22,22 +22,24 @@ jobs:
         run: |
           set +e
           python3 tools/api_cleanup.py > api-cleanup-check.log 2>&1
-          script_status=$?
+          api_status=$?
+          python3 tools/graph_cleanup.py >> api-cleanup-check.log 2>&1
+          graph_status=$?
           cargo fmt --all -- --check >> api-cleanup-check.log 2>&1
           fmt_status=$?
           cargo check --workspace --all-targets >> api-cleanup-check.log 2>&1
           check_status=$?
           cargo test --workspace >> api-cleanup-check.log 2>&1
           test_status=$?
-          status=$((script_status || fmt_status || check_status || test_status))
-          printf '\nscript=%s fmt=%s check=%s test=%s\n' \
-            "$script_status" "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
+          status=$((api_status || graph_status || fmt_status || check_status || test_status))
+          printf '\napi=%s graph=%s fmt=%s check=%s test=%s\n' \
+            "$api_status" "$graph_status" "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
       - name: Commit generated cleanup and diagnostics
         shell: bash
         run: |
-          rm -f api-cleanup-inventory.txt
+          rm -f api-cleanup-inventory.txt api-legacy-inventory.txt
           if [[ '${{ steps.validate.outputs.status }}' == '0' ]]; then
             rm -f api-cleanup-check.log
           fi
@@ -45,7 +47,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m 'refactor: remove versioned Stitch data contracts'
+            git commit -m 'refactor: keep only the current Stitch API'
             git push origin HEAD:cleanup/current-api-only
           fi
       - name: Report validation result
