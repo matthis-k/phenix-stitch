@@ -108,3 +108,15 @@ for path in contract_files:
     text = path.read_text()
     if field_pattern.search(text) or json_pattern.search(text):
         raise SystemExit(f"Stitch-owned version field remains in {path.relative_to(ROOT)}")
+
+# Inventory retired graph generations before removing them.
+legacy = re.compile(
+    r"WorkspaceDag|WorkspaceGraph|WorkspaceNode|WorkspaceEdge|FlakeNode|"
+    r"DependencyEdge|from_legacy|to_legacy"
+)
+lines: list[str] = []
+for path in sorted((ROOT / "crates").rglob("*.rs")):
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        if legacy.search(line):
+            lines.append(f"{path.relative_to(ROOT)}:{number}:{line.strip()}")
+(ROOT / "api-legacy-inventory.txt").write_text("\n".join(lines) + "\n")
