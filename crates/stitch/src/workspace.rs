@@ -548,8 +548,6 @@ mod tests {
                     }
                 },
                 "root": "root",
-                "version": 7
-            }"#,
         )
         .unwrap();
 

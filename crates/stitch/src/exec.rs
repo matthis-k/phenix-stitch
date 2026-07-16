@@ -1568,8 +1568,6 @@ mod tests {
                 "pins": { "locked": { "type": "path", "path": "../00-pins/pins" } }
               },
               "root": "root",
-              "version": 7
-            }"#,
         )
         .unwrap();
         std::fs::write(
@@ -1580,14 +1578,11 @@ mod tests {
                 "tools": { "locked": { "type": "path", "path": "../../02-producers/tools" } }
               },
               "root": "root",
-              "version": 7
-            }"#,
         )
         .unwrap();
         std::fs::write(
             stitch_dir.join("topology.json"),
             r#"{
-              "version": 1,
               "workspace": "test",
               "repos": [
                 { "name": "pins", "role": "pins", "layer": 0 },
