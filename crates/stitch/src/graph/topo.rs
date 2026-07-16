@@ -28,7 +28,9 @@ pub fn provider_before_consumer_order(
             order: PlanOrderMode::ProvidersFirst,
             stable_order,
         })
-        .map_err(|error| TopoError { cycle_nodes: vec![error] })?;
+        .map_err(|error| TopoError {
+            cycle_nodes: vec![error],
+        })?;
     Ok(plan.nodes.into_iter().map(|node| node.name).collect())
 }
 
@@ -55,7 +57,9 @@ mod tests {
             .map(|(from, to)| EdgeSpec {
                 from: from.to_string(),
                 to: to.to_string(),
-                kind: EdgeKind::Manual { source_file: "test".into() },
+                kind: EdgeKind::Manual {
+                    source_file: "test".into(),
+                },
             })
             .collect();
         CanonicalWorkspaceGraph::from_draft(draft).unwrap()

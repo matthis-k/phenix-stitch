@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{NodeKind, RepoRole, WorkspaceGraphDraft, EdgeSpec, NodeSpec};
+use crate::graph::{EdgeSpec, NodeKind, NodeSpec, RepoRole, WorkspaceGraphDraft};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiagnosticSeverity {
@@ -289,7 +289,7 @@ fn validate_snapshot(graph: &WorkspaceGraphDraft, opts: &ValidateOptions) -> Gra
     }
 }
 
-pub fn validate_graph(
+pub fn validate_snapshot(
     graph: &crate::graph::CanonicalWorkspaceGraph,
     opts: &ValidateOptions,
 ) -> GraphValidationReport {
@@ -477,7 +477,7 @@ mod tests {
         EdgeSpec {
             from: from.to_string(),
             to: to.to_string(),
-            reason: EdgeKind::Manual {
+            kind: EdgeKind::Manual {
                 source_file: PathBuf::from("test"),
             },
         }
@@ -687,8 +687,8 @@ mod tests {
             make_node_old("pins", NodeKind::Pins, Some(0), false),
         ];
         let graph = make_graph(nodes, vec![make_edge("hosts", "pins")]);
-        let canonical = crate::graph::CanonicalWorkspaceGraph::from_snapshot(graph).unwrap();
-        let report = validate_canonical_graph(&canonical, &ValidateOptions::default());
+        let canonical = crate::graph::CanonicalWorkspaceGraph::from_draft(graph).unwrap();
+        let report = validate_graph(&canonical, &ValidateOptions::default());
         assert!(report.valid);
         assert_eq!(report.edge_count, 1);
     }

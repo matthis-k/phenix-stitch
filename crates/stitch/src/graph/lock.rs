@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_build_workspace_aliases() {
-        use crate::graph::{NodeKind, RepoRole, NodeSpec};
+        use crate::graph::{NodeKind, NodeSpec, RepoRole};
         use std::collections::BTreeMap;
         use std::path::PathBuf;
 

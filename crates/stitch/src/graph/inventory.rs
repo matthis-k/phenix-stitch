@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::graph::{NodeKind, RepoRole, NodeSpec};
+use crate::graph::{NodeKind, NodeSpec, RepoRole};
 use crate::model::WorkspaceConfig;
 
 #[derive(Debug, Clone)]

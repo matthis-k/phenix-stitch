@@ -923,7 +923,7 @@ pub fn resume_sync(
     let journal = load_journal(transaction_id, cfg)?
         .ok_or_else(|| format!("Transaction '{}' not found", transaction_id))?;
 
-    let _graph = crate::graph::discover_graph(cfg)?;
+    let _graph = crate::graph::discover_sync_graph(cfg)?;
 
     if journal.actions.is_empty() {
         return Err(format!(

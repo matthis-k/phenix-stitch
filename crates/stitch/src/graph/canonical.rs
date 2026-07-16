@@ -69,7 +69,6 @@ impl CanonicalWorkspaceGraph {
         })
     }
 
-
     pub fn stable_graph(&self) -> &StableDiGraph<NodeSpec, EdgeSpec> {
         &self.graph
     }
@@ -153,9 +152,8 @@ impl CanonicalWorkspaceGraph {
             .semantic_edges()
             .into_iter()
             .filter_map(|edge| {
-                edge.input_name().map(|input_name| {
-                    crate::graph::SyncEdge::new(&edge.from, &edge.to, input_name)
-                })
+                edge.input_name()
+                    .map(|input_name| crate::graph::SyncEdge::new(&edge.from, &edge.to, input_name))
             })
             .collect();
         crate::graph::SyncGraph { root, nodes, edges }

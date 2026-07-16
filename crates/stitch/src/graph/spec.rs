@@ -19,9 +19,17 @@ pub struct NodeSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum EdgeKind {
-    FlakeInput { input_name: String, lock_file: PathBuf },
-    Manual { source_file: PathBuf },
-    SubmoduleMembership { path: PathBuf, gitlink: Option<String> },
+    FlakeInput {
+        input_name: String,
+        lock_file: PathBuf,
+    },
+    Manual {
+        source_file: PathBuf,
+    },
+    SubmoduleMembership {
+        path: PathBuf,
+        gitlink: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,7 +48,10 @@ impl EdgeSpec {
     }
 
     pub fn is_semantic_dependency(&self) -> bool {
-        matches!(self.kind, EdgeKind::FlakeInput { .. } | EdgeKind::Manual { .. })
+        matches!(
+            self.kind,
+            EdgeKind::FlakeInput { .. } | EdgeKind::Manual { .. }
+        )
     }
 
     pub fn dedup_key(&self) -> (String, String, Option<String>, &'static str) {
@@ -49,7 +60,12 @@ impl EdgeSpec {
             EdgeKind::Manual { .. } => "manual",
             EdgeKind::SubmoduleMembership { .. } => "submodule-membership",
         };
-        (self.from.clone(), self.to.clone(), self.input_name().map(str::to_owned), kind)
+        (
+            self.from.clone(),
+            self.to.clone(),
+            self.input_name().map(str::to_owned),
+            kind,
+        )
     }
 }
 
@@ -63,7 +79,12 @@ pub struct WorkspaceGraphDraft {
 
 impl WorkspaceGraphDraft {
     pub fn new(nodes: BTreeMap<String, NodeSpec>) -> Self {
-        Self { nodes, edges: Vec::new(), external_inputs: Vec::new(), diagnostics: Vec::new() }
+        Self {
+            nodes,
+            edges: Vec::new(),
+            external_inputs: Vec::new(),
+            diagnostics: Vec::new(),
+        }
     }
 
     pub fn merge(&mut self, other: Self) {
@@ -80,7 +101,9 @@ impl WorkspaceGraphDraft {
     }
 
     pub fn semantic_edges(&self) -> impl Iterator<Item = &EdgeSpec> {
-        self.edges.iter().filter(|edge| edge.is_semantic_dependency())
+        self.edges
+            .iter()
+            .filter(|edge| edge.is_semantic_dependency())
     }
 }
 
@@ -98,7 +121,10 @@ pub struct StrategyError {
 
 impl StrategyError {
     pub fn new(strategy: &'static str, message: impl Into<String>) -> Self {
-        Self { strategy, message: message.into() }
+        Self {
+            strategy,
+            message: message.into(),
+        }
     }
 }
 

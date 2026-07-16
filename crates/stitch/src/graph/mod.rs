@@ -183,11 +183,17 @@ impl SyncGraph {
     }
 
     pub fn dependents_of(&self, node_id: &NodeId) -> Vec<&SyncEdge> {
-        self.edges.iter().filter(|edge| edge.to == *node_id).collect()
+        self.edges
+            .iter()
+            .filter(|edge| edge.to == *node_id)
+            .collect()
     }
 
     pub fn dependencies_of(&self, node_id: &NodeId) -> Vec<&SyncEdge> {
-        self.edges.iter().filter(|edge| edge.from == *node_id).collect()
+        self.edges
+            .iter()
+            .filter(|edge| edge.from == *node_id)
+            .collect()
     }
 
     fn detect_cycles(&self) -> Result<(), Vec<NodeId>> {
@@ -207,7 +213,11 @@ impl SyncGraph {
         self.detect_cycles().map_err(|cycle| {
             format!(
                 "Cycle detected: {}",
-                cycle.iter().map(String::as_str).collect::<Vec<_>>().join(" -> ")
+                cycle
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
             )
         })?;
 
@@ -272,7 +282,11 @@ pub fn discover_sync_graph(cfg: &WorkspaceConfig) -> Result<SyncGraph, String> {
 
     for repo in &cfg.repos {
         let repo_path = repo.resolved_path(cfg);
-        let repo_path = if repo_path.is_relative() { cwd.join(repo_path) } else { repo_path };
+        let repo_path = if repo_path.is_relative() {
+            cwd.join(repo_path)
+        } else {
+            repo_path
+        };
         let branch = if repo_path.join(".git").exists() {
             git::git_branch(&repo_path).unwrap_or_else(|_| "main".to_string())
         } else {
@@ -326,8 +340,8 @@ fn scan_flake_inputs(
     if !flake_path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&flake_path)
-        .map_err(|e| format!("Read flake.nix: {e}"))?;
+    let content =
+        std::fs::read_to_string(&flake_path).map_err(|e| format!("Read flake.nix: {e}"))?;
     let mut dependencies = Vec::new();
     for repo in &cfg.repos {
         if repo.name == cfg.workspace || repo_path == repo.resolved_path(cfg) {
@@ -381,7 +395,10 @@ mod tests {
     #[test]
     fn sync_graph_orders_dependencies_first() {
         let graph = make_graph(vec![("root", "shell"), ("shell", "tools")]);
-        assert_eq!(graph.topological_order().unwrap(), vec!["tools", "shell", "root"]);
+        assert_eq!(
+            graph.topological_order().unwrap(),
+            vec!["tools", "shell", "root"]
+        );
     }
 
     #[test]

@@ -8,7 +8,10 @@ pub enum RenderFormat {
     Mermaid,
 }
 
-fn render_graph_snapshot(graph: &WorkspaceGraphDraft, format: RenderFormat) -> Result<String, String> {
+fn render_graph_snapshot(
+    graph: &WorkspaceGraphDraft,
+    format: RenderFormat,
+) -> Result<String, String> {
     match format {
         RenderFormat::Json => render_graph_json(graph),
         RenderFormat::Text => render_graph_text(graph),
@@ -16,6 +19,20 @@ fn render_graph_snapshot(graph: &WorkspaceGraphDraft, format: RenderFormat) -> R
     }
 }
 
+fn render_graph_snapshot(
+    graph: &CanonicalWorkspaceGraph,
+    format: RenderFormat,
+) -> Result<String, String> {
+    render_graph_snapshot(&graph.to_snapshot(), format)
+}
+
+fn render_order_snapshot(
+    graph: &CanonicalWorkspaceGraph,
+    order: &[String],
+    format: RenderFormat,
+) -> Result<String, String> {
+    render_order_snapshot(&graph.to_snapshot(), order, format)
+}
 
 pub fn render_graph_derive(
     graph: &CanonicalWorkspaceGraph,
@@ -236,7 +253,7 @@ fn render_graph_text(graph: &WorkspaceGraphDraft) -> Result<String, String> {
     } else {
         out.push_str("\nEdges:\n");
         for edge in &graph.edges {
-            let reason = match &edge.reason {
+            let reason = match &edge.kind {
                 super::EdgeKind::FlakeInput { input_name, .. } => {
                     format!("input={input_name}")
                 }
