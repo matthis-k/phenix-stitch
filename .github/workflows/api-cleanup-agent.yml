@@ -16,16 +16,12 @@ jobs:
         with:
           ref: cleanup/current-api-only
           fetch-depth: 0
-      - name: Apply and validate cleanup
+      - name: Finalize and validate cleanup
         id: validate
         shell: bash
         run: |
           set +e
-          python3 tools/api_cleanup.py > api-cleanup-check.log 2>&1
-          api_status=$?
-          python3 tools/graph_cleanup.py >> api-cleanup-check.log 2>&1
-          graph_status=$?
-          python3 tools/graph_cleanup_fix.py >> api-cleanup-check.log 2>&1
+          python3 tools/graph_cleanup_fix.py > api-cleanup-check.log 2>&1
           fix_status=$?
           cargo fmt --all >> api-cleanup-check.log 2>&1
           fmt_apply_status=$?
@@ -35,12 +31,12 @@ jobs:
           check_status=$?
           cargo test --workspace >> api-cleanup-check.log 2>&1
           test_status=$?
-          status=$((api_status || graph_status || fix_status || fmt_apply_status || fmt_status || check_status || test_status))
-          printf '\napi=%s graph=%s fix=%s fmt_apply=%s fmt=%s check=%s test=%s\n' \
-            "$api_status" "$graph_status" "$fix_status" "$fmt_apply_status" "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
+          status=$((fix_status || fmt_apply_status || fmt_status || check_status || test_status))
+          printf '\nfix=%s fmt_apply=%s fmt=%s check=%s test=%s\n' \
+            "$fix_status" "$fmt_apply_status" "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
-      - name: Commit generated cleanup and diagnostics
+      - name: Commit finalized source and diagnostics
         shell: bash
         run: |
           rm -f api-cleanup-inventory.txt api-legacy-inventory.txt
@@ -51,7 +47,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m 'refactor: keep only the current Stitch API'
+            git commit -m 'refactor: finalize current-only Stitch API'
             git push origin HEAD:cleanup/current-api-only
           fi
       - name: Report validation result
