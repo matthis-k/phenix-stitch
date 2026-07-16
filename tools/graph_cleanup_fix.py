@@ -21,6 +21,25 @@ def replace(path: str, old: str, new: str) -> None:
     rewrite(path, lambda source: source.replace(old, new))
 
 
+def deny_unknown_fields(path: str, struct_name: str) -> None:
+    marker = f"pub struct {struct_name} {{"
+
+    def transform(source: str) -> str:
+        position = source.find(marker)
+        if position < 0:
+            raise SystemExit(f"missing persisted struct {struct_name} in {path}")
+        derive_start = source.rfind("#[derive(", 0, position)
+        if derive_start < 0:
+            raise SystemExit(f"missing derive for {struct_name} in {path}")
+        between = source[derive_start:position]
+        if "#[serde(deny_unknown_fields)]" in between:
+            return source
+        line_end = source.find("\n", derive_start)
+        return source[: line_end + 1] + "#[serde(deny_unknown_fields)]\n" + source[line_end + 1 :]
+
+    rewrite(path, transform)
+
+
 (ROOT / "crates/stitch/src/lib.rs").write_text(
     """pub mod changeset;
 pub mod config;
@@ -115,6 +134,48 @@ def repair_validate(source: str) -> str:
 
 
 rewrite("crates/stitch/src/graph/validate.rs", repair_validate)
+
+# Persisted Stitch data accepts exactly the current shape. A retired `version`
+# or `schema_version` selector is an unknown field and therefore an error.
+for file_name, struct_name in [
+    ("crates/stitch/src/model.rs", "WorkspaceConfig"),
+    ("crates/stitch/src/model.rs", "Changeset"),
+    ("crates/stitch/src/recipe.rs", "RecipeCollection"),
+    ("crates/stitch/src/workloop.rs", "LoopWallet"),
+    ("crates/stitch/src/workspace.rs", "WorkspaceState"),
+]:
+    deny_unknown_fields(file_name, struct_name)
+
+
+def add_contract_test(source: str) -> str:
+    test_name = "retired_version_selectors_are_rejected"
+    if test_name in source:
+        return source
+    insertion = r'''
+
+    #[test]
+    fn retired_version_selectors_are_rejected() {
+        let workspace = r#"{"version":1,"workspace":"test","repos":[]}"#;
+        assert!(serde_json::from_str::<WorkspaceConfig>(workspace).is_err());
+
+        let changeset = r#"{
+            "version": 1,
+            "id": "test",
+            "title": "Test",
+            "workspace": "test",
+            "state": "Planned",
+            "repos": []
+        }"#;
+        assert!(serde_json::from_str::<Changeset>(changeset).is_err());
+    }
+'''
+    closing = source.rfind("\n}")
+    if closing < 0:
+        raise SystemExit("cannot locate model test module closing brace")
+    return source[:closing] + insertion + source[closing:]
+
+
+rewrite("crates/stitch/src/model.rs", add_contract_test)
 
 # Current graph derivation returns the canonical graph directly. No retired
 # names or adapter vocabulary may remain in production Rust code.
