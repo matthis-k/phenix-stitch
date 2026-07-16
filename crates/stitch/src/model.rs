@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
-    pub version: u32,
     pub workspace: String,
     pub repos: Vec<RepoConfig>,
     #[serde(skip)]
@@ -34,7 +33,6 @@ impl RepoConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Changeset {
-    pub version: u32,
     pub id: String,
     pub title: String,
     pub workspace: String,

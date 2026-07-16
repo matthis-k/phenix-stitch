@@ -39,7 +39,6 @@ pub use transition::{valid_actions_for_state, validate_state_transition};
 /// else live from JJ / Stitch / Tend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopWallet {
-    pub schema_version: u32,
     pub loop_id: String,
     pub feature: String,
     pub backend: VcsBackend,
@@ -1432,7 +1431,6 @@ mod tests {
     fn test_wallet_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let wallet = LoopWallet {
-            schema_version: 1,
             loop_id: "test-001".to_string(),
             feature: "test-feature".to_string(),
             backend: VcsBackend::Jj,
@@ -1976,7 +1974,6 @@ mod tests {
     fn transition_updates_revision_and_actions() {
         let now = Timestamp::now();
         let mut wallet = LoopWallet {
-            schema_version: 2,
             loop_id: "loop-test".to_string(),
             feature: "safe-feature".to_string(),
             backend: VcsBackend::Git,

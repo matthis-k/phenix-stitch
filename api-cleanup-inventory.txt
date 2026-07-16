@@ -1,3 +1,0 @@
-=== legacy graph symbols ===
-=== Stitch-owned schema versions ===
-=== compatibility markers ===

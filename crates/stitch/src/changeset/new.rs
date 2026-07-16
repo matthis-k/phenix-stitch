@@ -29,7 +29,6 @@ pub fn execute(title: &str) -> Result<(), String> {
         .collect();
 
     let cs = Changeset {
-        version: 1,
         id: id.clone(),
         title: title.to_string(),
         workspace: cfg.workspace.clone(),

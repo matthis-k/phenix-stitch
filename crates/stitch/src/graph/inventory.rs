@@ -163,7 +163,6 @@ fn role_to_kind(role: RepoRole) -> NodeKind {
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 struct WorkspaceMetadata {
-    version: u32,
     #[serde(default)]
     workspace: Option<String>,
     repos: Vec<WorkspaceMetadataRepo>,
@@ -184,7 +183,6 @@ mod tests {
 
     fn config(root: &Path) -> WorkspaceConfig {
         WorkspaceConfig {
-            version: 2,
             workspace: "workspace".to_string(),
             repos: vec![
                 RepoConfig {
@@ -225,7 +223,6 @@ mod tests {
         std::fs::write(
             &metadata,
             r#"{
-                "version": 1,
                 "repos": [
                     {"name": "workspace", "role": "root", "layer": 6},
                     {"name": "phenix-stitch", "role": "producer", "layer": 2}
@@ -250,7 +247,6 @@ mod tests {
         std::fs::write(
             &metadata,
             r#"{
-                "version": 1,
                 "repos": [
                     {"name": "not-discovered", "role": "producer", "layer": 2}
                 ]
