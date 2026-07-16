@@ -38,6 +38,18 @@ jobs:
               flags=re.DOTALL,
           )
           canonical.write_text(text)
+
+          strategy = Path('crates/stitch/src/graph/strategy.rs')
+          text = strategy.read_text().replace(
+              '.map(|(id, node)| (id, node.into()))',
+              '.collect()',
+          )
+          # The replacement above intentionally turns `into_iter().map(...).collect()`
+          # into `into_iter().collect().collect()` only if applied blindly. Normalize
+          # the two current identity pipelines to direct collection.
+          text = text.replace('.into_iter()\n            .collect()\n            .collect()', '.into_iter()\n            .collect()')
+          text = text.replace('.into_iter()\n                .collect()\n                .collect()', '.into_iter()\n                .collect()')
+          strategy.write_text(text)
           PY
       - name: Validate and capture diagnostics
         id: validate
@@ -69,7 +81,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m 'refactor: remove final stale API adapter'
+            git commit -m 'refactor: remove redundant graph conversions'
             git push origin HEAD:cleanup/current-api-only
           fi
       - name: Report failure
