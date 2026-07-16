@@ -1,0 +1,169 @@
+crates/stitch/src/exec.rs:270:) -> Result<graph::CanonicalWorkspaceGraph, String> {
+crates/stitch/src/exec.rs:302:graph::CanonicalWorkspaceGraph::from_legacy(dag).map_err(|e| e.to_string())
+crates/stitch/src/graph/canonical.rs:6:use crate::graph::spec::{EdgeSpec, NodeSpec, WorkspaceGraphDraft};
+crates/stitch/src/graph/canonical.rs:7:use crate::graph::{WorkspaceDag, WorkspaceEdge};
+crates/stitch/src/graph/canonical.rs:10:pub struct CanonicalWorkspaceGraph {
+crates/stitch/src/graph/canonical.rs:31:impl CanonicalWorkspaceGraph {
+crates/stitch/src/graph/canonical.rs:32:pub fn from_draft(mut draft: WorkspaceGraphDraft) -> Result<Self, CanonicalizeError> {
+crates/stitch/src/graph/canonical.rs:73:pub fn from_legacy(graph: WorkspaceDag) -> Result<Self, CanonicalizeError> {
+crates/stitch/src/graph/canonical.rs:117:pub fn to_legacy_dag(&self) -> WorkspaceDag {
+crates/stitch/src/graph/canonical.rs:128:let edges: Vec<WorkspaceEdge> = self
+crates/stitch/src/graph/canonical.rs:131:.filter_map(|edge| WorkspaceEdge::try_from(edge.weight().clone()).ok())
+crates/stitch/src/graph/canonical.rs:133:WorkspaceDag {
+crates/stitch/src/graph/canonical.rs:141:pub fn to_legacy_workspace_graph(&self, root: String) -> crate::graph::WorkspaceGraph {
+crates/stitch/src/graph/canonical.rs:149:crate::graph::FlakeNode {
+crates/stitch/src/graph/canonical.rs:165:crate::graph::DependencyEdge::new(&edge.from, &edge.to, input_name)
+crates/stitch/src/graph/canonical.rs:169:crate::graph::WorkspaceGraph { root, nodes, edges }
+crates/stitch/src/graph/canonical.rs:224:let mut draft = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/canonical.rs:235:let graph = CanonicalWorkspaceGraph::from_draft(draft).unwrap();
+crates/stitch/src/graph/canonical.rs:249:let mut draft = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/canonical.rs:297:let graph = CanonicalWorkspaceGraph::from_draft(draft).unwrap();
+crates/stitch/src/graph/canonical.rs:325:let mut draft = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/canonical.rs:374:let graph = CanonicalWorkspaceGraph::from_draft(draft).unwrap();
+crates/stitch/src/graph/derive.rs:6:use crate::graph::{WorkspaceDag, WorkspaceNode};
+crates/stitch/src/graph/derive.rs:28:impl WorkspaceDag {
+crates/stitch/src/graph/derive.rs:29:pub fn new(nodes: BTreeMap<String, WorkspaceNode>) -> Self {
+crates/stitch/src/graph/derive.rs:30:WorkspaceDag {
+crates/stitch/src/graph/derive.rs:54:) -> Result<WorkspaceDag, GraphError> {
+crates/stitch/src/graph/derive.rs:68:) -> Result<WorkspaceDag, GraphError> {
+crates/stitch/src/graph/inventory.rs:6:use crate::graph::{NodeKind, RepoRole, WorkspaceNode};
+crates/stitch/src/graph/inventory.rs:11:pub nodes: BTreeMap<String, WorkspaceNode>,
+crates/stitch/src/graph/inventory.rs:48:WorkspaceNode {
+crates/stitch/src/graph/inventory.rs:99:nodes: &mut BTreeMap<String, WorkspaceNode>,
+crates/stitch/src/graph/lock.rs:86:nodes: &BTreeMap<String, super::WorkspaceNode>,
+crates/stitch/src/graph/lock.rs:279:use crate::graph::{NodeKind, RepoRole, WorkspaceNode};
+crates/stitch/src/graph/lock.rs:286:WorkspaceNode {
+crates/stitch/src/graph/mod.rs:20:pub use canonical::{CanonicalWorkspaceGraph, CanonicalizeError};
+crates/stitch/src/graph/mod.rs:31:WorkspaceGraphDraft,
+crates/stitch/src/graph/mod.rs:145:pub struct WorkspaceNode {
+crates/stitch/src/graph/mod.rs:156:pub struct WorkspaceEdge {
+crates/stitch/src/graph/mod.rs:183:pub struct WorkspaceDag {
+crates/stitch/src/graph/mod.rs:184:pub nodes: BTreeMap<String, WorkspaceNode>,
+crates/stitch/src/graph/mod.rs:185:pub edges: Vec<WorkspaceEdge>,
+crates/stitch/src/graph/mod.rs:193:pub struct FlakeNode {
+crates/stitch/src/graph/mod.rs:202:pub struct DependencyEdge {
+crates/stitch/src/graph/mod.rs:208:impl DependencyEdge {
+crates/stitch/src/graph/mod.rs:219:pub struct WorkspaceGraph {
+crates/stitch/src/graph/mod.rs:221:pub nodes: BTreeMap<NodeId, FlakeNode>,
+crates/stitch/src/graph/mod.rs:222:pub edges: Vec<DependencyEdge>,
+crates/stitch/src/graph/mod.rs:225:impl WorkspaceGraph {
+crates/stitch/src/graph/mod.rs:226:pub fn get_node(&self, id: &NodeId) -> Option<&FlakeNode> {
+crates/stitch/src/graph/mod.rs:230:pub fn dependents_of(&self, node_id: &NodeId) -> Vec<&DependencyEdge> {
+crates/stitch/src/graph/mod.rs:234:pub fn dependencies_of(&self, node_id: &NodeId) -> Vec<&DependencyEdge> {
+crates/stitch/src/graph/mod.rs:300:graph: &'a WorkspaceGraph,
+crates/stitch/src/graph/mod.rs:325:pub fn discover_graph(cfg: &WorkspaceConfig) -> Result<WorkspaceGraph, String> {
+crates/stitch/src/graph/mod.rs:353:FlakeNode {
+crates/stitch/src/graph/mod.rs:375:edges.push(DependencyEdge::new(&repo.name, dep_name, input_name));
+crates/stitch/src/graph/mod.rs:392:Ok(WorkspaceGraph {
+crates/stitch/src/graph/mod.rs:438:fn make_graph(edges: Vec<(&str, &str)>) -> WorkspaceGraph {
+crates/stitch/src/graph/mod.rs:449:FlakeNode {
+crates/stitch/src/graph/mod.rs:458:let edges: Vec<DependencyEdge> = edges
+crates/stitch/src/graph/mod.rs:460:.map(|(from, to)| DependencyEdge::new(from, to, to))
+crates/stitch/src/graph/mod.rs:463:WorkspaceGraph { root, nodes, edges }
+crates/stitch/src/graph/planner.rs:3:use crate::graph::canonical::CanonicalWorkspaceGraph;
+crates/stitch/src/graph/planner.rs:50:graph: &'a CanonicalWorkspaceGraph,
+crates/stitch/src/graph/planner.rs:54:pub fn new(graph: &'a CanonicalWorkspaceGraph) -> Self {
+crates/stitch/src/graph/planner.rs:246:use crate::graph::canonical::CanonicalWorkspaceGraph;
+crates/stitch/src/graph/planner.rs:247:use crate::graph::spec::{EdgeKind, EdgeSpec, NodeSpec, WorkspaceGraphDraft};
+crates/stitch/src/graph/planner.rs:261:fn graph() -> CanonicalWorkspaceGraph {
+crates/stitch/src/graph/planner.rs:262:let mut draft = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/planner.rs:282:CanonicalWorkspaceGraph::from_draft(draft).unwrap()
+crates/stitch/src/graph/render.rs:1:use crate::graph::{validate::GraphValidationReport, WorkspaceDag};
+crates/stitch/src/graph/render.rs:11:pub fn render_graph_derive(graph: &WorkspaceDag, format: RenderFormat) -> Result<String, String> {
+crates/stitch/src/graph/render.rs:31:graph: &WorkspaceDag,
+crates/stitch/src/graph/render.rs:169:crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).map_err(|e| e.to_string())?;
+crates/stitch/src/graph/render.rs:201:fn render_graph_text(graph: &WorkspaceDag) -> Result<String, String> {
+crates/stitch/src/graph/render.rs:250:fn render_graph_json(graph: &WorkspaceDag) -> Result<String, String> {
+crates/stitch/src/graph/render.rs:254:fn render_graph_mermaid(graph: &WorkspaceDag) -> Result<String, String> {
+crates/stitch/src/graph/render.rs:323:fn render_order_text(order: &[String], graph: &WorkspaceDag) -> Result<String, String> {
+crates/stitch/src/graph/render.rs:343:fn render_order_mermaid(graph: &WorkspaceDag, order: &[String]) -> Result<String, String> {
+crates/stitch/src/graph/render.rs:367:fn mermaid_label(node: &super::WorkspaceNode) -> String {
+crates/stitch/src/graph/spec.rs:8:EdgeReason, ExternalInput, NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge, WorkspaceNode,
+crates/stitch/src/graph/spec.rs:22:impl From<WorkspaceNode> for NodeSpec {
+crates/stitch/src/graph/spec.rs:23:fn from(node: WorkspaceNode) -> Self {
+crates/stitch/src/graph/spec.rs:36:impl From<NodeSpec> for WorkspaceNode {
+crates/stitch/src/graph/spec.rs:102:impl From<WorkspaceEdge> for EdgeSpec {
+crates/stitch/src/graph/spec.rs:103:fn from(edge: WorkspaceEdge) -> Self {
+crates/stitch/src/graph/spec.rs:122:impl TryFrom<EdgeSpec> for WorkspaceEdge {
+crates/stitch/src/graph/spec.rs:146:pub struct WorkspaceGraphDraft {
+crates/stitch/src/graph/spec.rs:153:impl WorkspaceGraphDraft {
+crates/stitch/src/graph/spec.rs:163:pub fn merge(&mut self, other: WorkspaceGraphDraft) {
+crates/stitch/src/graph/spec.rs:183:impl From<WorkspaceDag> for WorkspaceGraphDraft {
+crates/stitch/src/graph/spec.rs:184:fn from(graph: WorkspaceDag) -> Self {
+crates/stitch/src/graph/spec.rs:200:impl From<WorkspaceGraphDraft> for WorkspaceDag {
+crates/stitch/src/graph/spec.rs:201:fn from(mut draft: WorkspaceGraphDraft) -> Self {
+crates/stitch/src/graph/spec.rs:211:.filter_map(|edge| WorkspaceEdge::try_from(edge).ok())
+crates/stitch/src/graph/spec.rs:213:WorkspaceDag {
+crates/stitch/src/graph/spec.rs:253:fn generate(&self, ctx: &GenerationContext) -> Result<WorkspaceGraphDraft, StrategyError>;
+crates/stitch/src/graph/spec.rs:262:let mut draft = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/strategy.rs:13:WorkspaceGraphDraft,
+crates/stitch/src/graph/strategy.rs:27:) -> Result<WorkspaceGraphDraft, StrategyError> {
+crates/stitch/src/graph/strategy.rs:36:) -> Result<WorkspaceGraphDraft, StrategyError> {
+crates/stitch/src/graph/strategy.rs:43:let mut draft = WorkspaceGraphDraft::new(nodes);
+crates/stitch/src/graph/strategy.rs:132:fn generate(&self, ctx: &GenerationContext) -> Result<WorkspaceGraphDraft, StrategyError> {
+crates/stitch/src/graph/strategy.rs:147:fn generate(&self, ctx: &GenerationContext) -> Result<WorkspaceGraphDraft, StrategyError> {
+crates/stitch/src/graph/strategy.rs:156:let mut draft = WorkspaceGraphDraft::new(
+crates/stitch/src/graph/strategy.rs:223:fn generate(&self, ctx: &GenerationContext) -> Result<WorkspaceGraphDraft, StrategyError> {
+crates/stitch/src/graph/strategy.rs:224:let mut merged = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/strategy.rs:248:let mut draft = WorkspaceGraphDraft::default();
+crates/stitch/src/graph/topo.rs:1:use crate::graph::canonical::CanonicalWorkspaceGraph;
+crates/stitch/src/graph/topo.rs:5:use crate::graph::WorkspaceDag;
+crates/stitch/src/graph/topo.rs:29:pub fn provider_before_consumer_order(graph: &WorkspaceDag) -> Result<Vec<String>, TopoError> {
+crates/stitch/src/graph/topo.rs:30:let canonical = CanonicalWorkspaceGraph::from_legacy(graph.clone()).map_err(|e| TopoError {
+crates/stitch/src/graph/topo.rs:51:use crate::graph::{EdgeReason, NodeKind, RepoRole, WorkspaceEdge, WorkspaceNode};
+crates/stitch/src/graph/topo.rs:55:fn make_node(id: &str, layer: Option<u32>) -> WorkspaceNode {
+crates/stitch/src/graph/topo.rs:56:WorkspaceNode {
+crates/stitch/src/graph/topo.rs:67:fn make_edge(from: &str, to: &str) -> WorkspaceEdge {
+crates/stitch/src/graph/topo.rs:68:WorkspaceEdge {
+crates/stitch/src/graph/topo.rs:77:fn make_dag(nodes: Vec<WorkspaceNode>, edges: Vec<WorkspaceEdge>) -> WorkspaceDag {
+crates/stitch/src/graph/topo.rs:82:WorkspaceDag {
+crates/stitch/src/graph/validate.rs:6:use crate::graph::{NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge, WorkspaceNode};
+crates/stitch/src/graph/validate.rs:21:pub edge: Option<WorkspaceEdge>,
+crates/stitch/src/graph/validate.rs:69:pub fn validate_graph(graph: &WorkspaceDag, opts: &ValidateOptions) -> GraphValidationReport {
+crates/stitch/src/graph/validate.rs:293:graph: &crate::graph::CanonicalWorkspaceGraph,
+crates/stitch/src/graph/validate.rs:296:validate_graph(&graph.to_legacy_dag(), opts)
+crates/stitch/src/graph/validate.rs:300:from: &WorkspaceNode,
+crates/stitch/src/graph/validate.rs:301:to: &WorkspaceNode,
+crates/stitch/src/graph/validate.rs:302:_edge: &WorkspaceEdge,
+crates/stitch/src/graph/validate.rs:405:fn find_cycle(graph: &WorkspaceDag) -> Option<Vec<String>> {
+crates/stitch/src/graph/validate.rs:422:graph: &WorkspaceDag,
+crates/stitch/src/graph/validate.rs:464:) -> WorkspaceNode {
+crates/stitch/src/graph/validate.rs:465:WorkspaceNode {
+crates/stitch/src/graph/validate.rs:476:fn make_edge(from: &str, to: &str) -> WorkspaceEdge {
+crates/stitch/src/graph/validate.rs:477:WorkspaceEdge {
+crates/stitch/src/graph/validate.rs:486:fn make_graph(nodes: Vec<WorkspaceNode>, edges: Vec<WorkspaceEdge>) -> WorkspaceDag {
+crates/stitch/src/graph/validate.rs:491:WorkspaceDag {
+crates/stitch/src/graph/validate.rs:499:fn make_node_old(id: &str, kind: NodeKind, layer: Option<u32>, is_root: bool) -> WorkspaceNode {
+crates/stitch/src/graph/validate.rs:690:let canonical = crate::graph::CanonicalWorkspaceGraph::from_legacy(graph).unwrap();
+crates/stitch/src/graph/validate.rs:752:let graph = WorkspaceDag {
+crates/stitch/src/graph/validate.rs:787:let graph = WorkspaceDag {
+crates/stitch/src/graph/validate.rs:816:let graph = WorkspaceDag {
+crates/stitch/src/graph/validate.rs:883:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:901:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:919:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:937:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:955:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:977:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:1016:let nodes = vec![WorkspaceNode {
+crates/stitch/src/graph/validate.rs:1140:nodes.push(WorkspaceNode {
+crates/stitch/src/lib.rs:22:canonical::{CanonicalWorkspaceGraph, CanonicalizeError},
+crates/stitch/src/lib.rs:33:WorkspaceGraphDraft,
+crates/stitch/src/lib.rs:40:EdgeReason, ExternalInput, GraphSource, NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge,
+crates/stitch/src/lib.rs:41:WorkspaceNode,
+crates/stitch/src/sync.rs:7:use crate::graph::{NodeId, WorkspaceGraph};
+crates/stitch/src/sync.rs:254:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:262:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:424:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:434:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:455:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:465:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:586:graph: &WorkspaceGraph,
+crates/stitch/src/sync.rs:1470:fn make_test_graph() -> WorkspaceGraph {
+crates/stitch/src/sync.rs:1476:graph::FlakeNode {
+crates/stitch/src/sync.rs:1486:graph::DependencyEdge::new("shell", "tools", "tools"),
+crates/stitch/src/sync.rs:1487:graph::DependencyEdge::new("root", "shell", "shell"),
+crates/stitch/src/sync.rs:1488:graph::DependencyEdge::new("root", "tools", "tools"),
+crates/stitch/src/sync.rs:1490:WorkspaceGraph {
+crates/stitch-mcp/src/main.rs:44:server.add_tool(Box::new(tools::StitchWorkspaceDagPlanTool));
+crates/stitch-mcp/src/tools.rs:508:pub struct StitchWorkspaceDagPlanTool;
+crates/stitch-mcp/src/tools.rs:510:impl McpTool for StitchWorkspaceDagPlanTool {
