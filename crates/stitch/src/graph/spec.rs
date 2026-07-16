@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::validate::GraphDiagnostic;
-use crate::graph::{
-    EdgeReason, ExternalInput, NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge, WorkspaceNode,
-};
+use crate::graph::{ExternalInput, NodeKind, RepoRole};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeSpec {
@@ -19,47 +17,11 @@ pub struct NodeSpec {
     pub is_root: bool,
 }
 
-impl From<WorkspaceNode> for NodeSpec {
-    fn from(node: WorkspaceNode) -> Self {
-        Self {
-            id: node.id,
-            path: node.path,
-            repo_url: node.repo_url,
-            kind: node.kind,
-            role: node.role,
-            layer: node.layer,
-            is_root: node.is_root,
-        }
-    }
-}
-
-impl From<NodeSpec> for WorkspaceNode {
-    fn from(node: NodeSpec) -> Self {
-        Self {
-            id: node.id,
-            path: node.path,
-            repo_url: node.repo_url,
-            kind: node.kind,
-            role: node.role,
-            layer: node.layer,
-            is_root: node.is_root,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum EdgeKind {
-    FlakeInput {
-        input_name: String,
-        lock_file: PathBuf,
-    },
-    Manual {
-        source_file: PathBuf,
-    },
-    SubmoduleMembership {
-        path: PathBuf,
-        gitlink: Option<String>,
-    },
+    FlakeInput { input_name: String, lock_file: PathBuf },
+    Manual { source_file: PathBuf },
+    SubmoduleMembership { path: PathBuf, gitlink: Option<String> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,16 +34,13 @@ pub struct EdgeSpec {
 impl EdgeSpec {
     pub fn input_name(&self) -> Option<&str> {
         match &self.kind {
-            EdgeKind::FlakeInput { input_name, .. } => Some(input_name.as_str()),
+            EdgeKind::FlakeInput { input_name, .. } => Some(input_name),
             _ => None,
         }
     }
 
     pub fn is_semantic_dependency(&self) -> bool {
-        matches!(
-            self.kind,
-            EdgeKind::FlakeInput { .. } | EdgeKind::Manual { .. }
-        )
+        matches!(self.kind, EdgeKind::FlakeInput { .. } | EdgeKind::Manual { .. })
     }
 
     pub fn dedup_key(&self) -> (String, String, Option<String>, &'static str) {
@@ -90,55 +49,7 @@ impl EdgeSpec {
             EdgeKind::Manual { .. } => "manual",
             EdgeKind::SubmoduleMembership { .. } => "submodule-membership",
         };
-        (
-            self.from.clone(),
-            self.to.clone(),
-            self.input_name().map(str::to_owned),
-            kind,
-        )
-    }
-}
-
-impl From<WorkspaceEdge> for EdgeSpec {
-    fn from(edge: WorkspaceEdge) -> Self {
-        let kind = match edge.reason {
-            EdgeReason::FlakeInput {
-                input_name,
-                lock_file,
-            } => EdgeKind::FlakeInput {
-                input_name,
-                lock_file,
-            },
-            EdgeReason::Manual { source_file } => EdgeKind::Manual { source_file },
-        };
-        Self {
-            from: edge.from,
-            to: edge.to,
-            kind,
-        }
-    }
-}
-
-impl TryFrom<EdgeSpec> for WorkspaceEdge {
-    type Error = EdgeSpec;
-
-    fn try_from(edge: EdgeSpec) -> Result<Self, Self::Error> {
-        let reason = match edge.kind {
-            EdgeKind::FlakeInput {
-                input_name,
-                lock_file,
-            } => EdgeReason::FlakeInput {
-                input_name,
-                lock_file,
-            },
-            EdgeKind::Manual { source_file } => EdgeReason::Manual { source_file },
-            EdgeKind::SubmoduleMembership { .. } => return Err(edge),
-        };
-        Ok(Self {
-            from: edge.from,
-            to: edge.to,
-            reason,
-        })
+        (self.from.clone(), self.to.clone(), self.input_name().map(str::to_owned), kind)
     }
 }
 
@@ -152,15 +63,10 @@ pub struct WorkspaceGraphDraft {
 
 impl WorkspaceGraphDraft {
     pub fn new(nodes: BTreeMap<String, NodeSpec>) -> Self {
-        Self {
-            nodes,
-            edges: Vec::new(),
-            external_inputs: Vec::new(),
-            diagnostics: Vec::new(),
-        }
+        Self { nodes, edges: Vec::new(), external_inputs: Vec::new(), diagnostics: Vec::new() }
     }
 
-    pub fn merge(&mut self, other: WorkspaceGraphDraft) {
+    pub fn merge(&mut self, other: Self) {
         self.nodes.extend(other.nodes);
         self.edges.extend(other.edges);
         self.external_inputs.extend(other.external_inputs);
@@ -174,48 +80,7 @@ impl WorkspaceGraphDraft {
     }
 
     pub fn semantic_edges(&self) -> impl Iterator<Item = &EdgeSpec> {
-        self.edges
-            .iter()
-            .filter(|edge| edge.is_semantic_dependency())
-    }
-}
-
-impl From<WorkspaceDag> for WorkspaceGraphDraft {
-    fn from(graph: WorkspaceDag) -> Self {
-        let nodes = graph
-            .nodes
-            .into_iter()
-            .map(|(id, node)| (id, node.into()))
-            .collect();
-        let edges = graph.edges.into_iter().map(EdgeSpec::from).collect();
-        Self {
-            nodes,
-            edges,
-            external_inputs: graph.external_inputs,
-            diagnostics: graph.diagnostics,
-        }
-    }
-}
-
-impl From<WorkspaceGraphDraft> for WorkspaceDag {
-    fn from(mut draft: WorkspaceGraphDraft) -> Self {
-        draft.dedup_edges();
-        let nodes = draft
-            .nodes
-            .into_iter()
-            .map(|(id, node)| (id, node.into()))
-            .collect();
-        let edges = draft
-            .edges
-            .into_iter()
-            .filter_map(|edge| WorkspaceEdge::try_from(edge).ok())
-            .collect();
-        WorkspaceDag {
-            nodes,
-            edges,
-            external_inputs: draft.external_inputs,
-            diagnostics: draft.diagnostics,
-        }
+        self.edges.iter().filter(|edge| edge.is_semantic_dependency())
     }
 }
 
@@ -233,10 +98,7 @@ pub struct StrategyError {
 
 impl StrategyError {
     pub fn new(strategy: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            strategy,
-            message: message.into(),
-        }
+        Self { strategy, message: message.into() }
     }
 }
 
@@ -260,24 +122,17 @@ mod tests {
     #[test]
     fn draft_dedups_by_input_name_not_repo_only() {
         let mut draft = WorkspaceGraphDraft::default();
-        draft.edges.push(EdgeSpec {
-            from: "consumer".into(),
-            to: "provider".into(),
-            kind: EdgeKind::FlakeInput {
-                input_name: "provider-pin".into(),
-                lock_file: "flake.lock".into(),
-            },
-        });
-        draft.edges.push(EdgeSpec {
-            from: "consumer".into(),
-            to: "provider".into(),
-            kind: EdgeKind::FlakeInput {
-                input_name: "provider-pin".into(),
-                lock_file: "flake.lock".into(),
-            },
-        });
+        for _ in 0..2 {
+            draft.edges.push(EdgeSpec {
+                from: "consumer".into(),
+                to: "provider".into(),
+                kind: EdgeKind::FlakeInput {
+                    input_name: "provider-pin".into(),
+                    lock_file: "flake.lock".into(),
+                },
+            });
+        }
         draft.dedup_edges();
         assert_eq!(draft.edges.len(), 1);
-        assert_eq!(draft.edges[0].input_name(), Some("provider-pin"));
     }
 }

@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::graph::spec::{DagGenerationStrategy, GenerationContext};
 use crate::graph::strategy::FlakeLocksStrategy;
-use crate::graph::{WorkspaceDag, WorkspaceNode};
+use crate::graph::CanonicalWorkspaceGraph;
 use crate::model::WorkspaceConfig;
 
 #[derive(Debug)]
@@ -16,42 +15,19 @@ pub enum GraphError {
 impl std::fmt::Display for GraphError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GraphError::Io(msg) => write!(f, "I/O error: {msg}"),
-            GraphError::Parse(msg) => write!(f, "parse error: {msg}"),
-            GraphError::Validation(msg) => write!(f, "validation error: {msg}"),
+            Self::Io(msg) => write!(f, "I/O error: {msg}"),
+            Self::Parse(msg) => write!(f, "parse error: {msg}"),
+            Self::Validation(msg) => write!(f, "validation error: {msg}"),
         }
     }
 }
 
 impl std::error::Error for GraphError {}
 
-impl WorkspaceDag {
-    pub fn new(nodes: BTreeMap<String, WorkspaceNode>) -> Self {
-        WorkspaceDag {
-            nodes,
-            edges: Vec::new(),
-            external_inputs: Vec::new(),
-            diagnostics: Vec::new(),
-        }
-    }
-
-    pub fn dedup_edges(&mut self) {
-        let mut unique = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for edge in self.edges.drain(..) {
-            let key = (edge.from.clone(), edge.to.clone());
-            if seen.insert(key) {
-                unique.push(edge);
-            }
-        }
-        self.edges = unique;
-    }
-}
-
 pub fn derive_workspace_graph(
     root: &Path,
     metadata: Option<&Path>,
-) -> Result<WorkspaceDag, GraphError> {
+) -> Result<CanonicalWorkspaceGraph, GraphError> {
     let context = GenerationContext {
         root: root.to_path_buf(),
         metadata: metadata.map(Path::to_path_buf),
@@ -59,15 +35,17 @@ pub fn derive_workspace_graph(
     let draft = FlakeLocksStrategy
         .generate(&context)
         .map_err(|error| GraphError::Parse(error.to_string()))?;
-    Ok(draft.into())
+    CanonicalWorkspaceGraph::from_draft(draft)
+        .map_err(|error| GraphError::Validation(error.to_string()))
 }
 
 pub fn derive_workspace_graph_from_config(
     config: &WorkspaceConfig,
     metadata: Option<&Path>,
-) -> Result<WorkspaceDag, GraphError> {
+) -> Result<CanonicalWorkspaceGraph, GraphError> {
     let draft = FlakeLocksStrategy
         .generate_from_config(config, metadata)
         .map_err(|error| GraphError::Parse(error.to_string()))?;
-    Ok(draft.into())
+    CanonicalWorkspaceGraph::from_draft(draft)
+        .map_err(|error| GraphError::Validation(error.to_string()))
 }

@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::graph::{NodeKind, RepoRole, WorkspaceNode};
+use crate::graph::{NodeKind, RepoRole, NodeSpec};
 use crate::model::WorkspaceConfig;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceDiscovery {
-    pub nodes: BTreeMap<String, WorkspaceNode>,
+    pub nodes: BTreeMap<String, NodeSpec>,
     pub metadata_path: Option<PathBuf>,
 }
 
@@ -45,7 +45,7 @@ pub fn discover_inventory_from_config(
         if nodes
             .insert(
                 repo.name.clone(),
-                WorkspaceNode {
+                NodeSpec {
                     id: repo.name.clone(),
                     path: canonical_path,
                     repo_url: repo.remote.clone(),
@@ -96,7 +96,7 @@ fn resolve_metadata_path(root: &Path, metadata_path: Option<&Path>) -> Option<Pa
 }
 
 fn apply_classification_metadata(
-    nodes: &mut BTreeMap<String, WorkspaceNode>,
+    nodes: &mut BTreeMap<String, NodeSpec>,
     metadata_path: &Path,
 ) -> Result<(), String> {
     let content = std::fs::read_to_string(metadata_path)

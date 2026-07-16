@@ -34,9 +34,8 @@ pub use graph::{
     },
     topo::provider_before_consumer_order,
     validate::{
-        validate_canonical_graph, validate_graph, DiagnosticSeverity, GraphDiagnostic,
+        validate_graph, DiagnosticSeverity, GraphDiagnostic,
         GraphValidationReport, ValidateOptions,
     },
-    EdgeReason, ExternalInput, GraphSource, NodeKind, RepoRole, WorkspaceDag, WorkspaceEdge,
-    WorkspaceNode,
+    EdgeKind, EdgeSpec, ExternalInput, NodeKind, NodeSpec, RepoRole, WorkspaceGraphDraft,
 };

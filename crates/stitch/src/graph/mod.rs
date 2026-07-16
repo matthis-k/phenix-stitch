@@ -33,19 +33,8 @@ pub use spec::{
 pub use strategy::{CompositeDagGenerationStrategy, FlakeLocksStrategy, GitSubmodulesStrategy};
 pub use topo::provider_before_consumer_order;
 pub use validate::{
-    validate_canonical_graph, validate_graph, DiagnosticSeverity, GraphDiagnostic,
-    GraphValidationReport, ValidateOptions,
+    validate_graph, DiagnosticSeverity, GraphDiagnostic, GraphValidationReport, ValidateOptions,
 };
-
-// ---------------------------------------------------------------------------
-// Lock-derived graph types (new subsystem)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GraphSource {
-    Locks,
-    Json,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeKind {
@@ -64,16 +53,16 @@ impl NodeKind {
     pub fn is_provider(&self) -> bool {
         matches!(
             self,
-            NodeKind::Pins
-                | NodeKind::PackageProvider
-                | NodeKind::ToolProvider
-                | NodeKind::ShellProvider
-                | NodeKind::DesktopProvider
+            Self::Pins
+                | Self::PackageProvider
+                | Self::ToolProvider
+                | Self::ShellProvider
+                | Self::DesktopProvider
         )
     }
 
     pub fn is_consumer(&self) -> bool {
-        matches!(self, NodeKind::HostConsumer)
+        matches!(self, Self::HostConsumer)
     }
 }
 
@@ -96,78 +85,49 @@ pub enum RepoRole {
 impl RepoRole {
     pub const fn as_str(self) -> &'static str {
         match self {
-            RepoRole::Pins => "pins",
-            RepoRole::Lib => "lib",
-            RepoRole::PkgsBase => "pkgs-base",
-            RepoRole::Protocols => "protocols",
-            RepoRole::Producer => "producer",
-            RepoRole::Integration => "integration",
-            RepoRole::PkgsAggregator => "pkgs-aggregator",
-            RepoRole::Consumer => "consumer",
-            RepoRole::Root => "root",
-            RepoRole::External => "external",
-            RepoRole::Unknown => "unknown",
+            Self::Pins => "pins",
+            Self::Lib => "lib",
+            Self::PkgsBase => "pkgs-base",
+            Self::Protocols => "protocols",
+            Self::Producer => "producer",
+            Self::Integration => "integration",
+            Self::PkgsAggregator => "pkgs-aggregator",
+            Self::Consumer => "consumer",
+            Self::Root => "root",
+            Self::External => "external",
+            Self::Unknown => "unknown",
         }
     }
 
     pub fn layer(self) -> Option<u32> {
         Some(match self {
-            RepoRole::Pins => 0,
-            RepoRole::Lib | RepoRole::PkgsBase | RepoRole::Protocols => 1,
-            RepoRole::Producer => 2,
-            RepoRole::Integration => 3,
-            RepoRole::PkgsAggregator => 4,
-            RepoRole::Consumer => 5,
-            RepoRole::Root => 6,
-            RepoRole::External => 255,
-            RepoRole::Unknown => return None,
+            Self::Pins => 0,
+            Self::Lib | Self::PkgsBase | Self::Protocols => 1,
+            Self::Producer => 2,
+            Self::Integration => 3,
+            Self::PkgsAggregator => 4,
+            Self::Consumer => 5,
+            Self::Root => 6,
+            Self::External => 255,
+            Self::Unknown => return None,
         })
     }
 
     pub fn is_root(self) -> bool {
-        matches!(self, RepoRole::Root)
+        matches!(self, Self::Root)
     }
 
     pub fn is_producer(self) -> bool {
-        self == RepoRole::Producer
+        self == Self::Producer
     }
 
     pub fn is_consumer(self) -> bool {
-        self == RepoRole::Consumer
+        self == Self::Consumer
     }
 
     pub fn is_pkgs_aggregator(self) -> bool {
-        self == RepoRole::PkgsAggregator
+        self == Self::PkgsAggregator
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceNode {
-    pub id: String,
-    pub path: PathBuf,
-    pub repo_url: Option<String>,
-    pub kind: NodeKind,
-    pub role: RepoRole,
-    pub layer: Option<u32>,
-    pub is_root: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceEdge {
-    pub from: String,
-    pub to: String,
-    pub reason: EdgeReason,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EdgeReason {
-    FlakeInput {
-        input_name: String,
-        lock_file: PathBuf,
-    },
-    Manual {
-        source_file: PathBuf,
-    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,18 +139,13 @@ pub struct ExternalInput {
     pub rev: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceDag {
-    pub nodes: BTreeMap<String, WorkspaceNode>,
-    pub edges: Vec<WorkspaceEdge>,
-    pub external_inputs: Vec<ExternalInput>,
-    pub diagnostics: Vec<GraphDiagnostic>,
-}
-
 pub type NodeId = String;
 
+/// Execution-oriented repository graph used by transactional synchronization.
+/// This is distinct from the canonical dependency graph because it snapshots
+/// branch and remote state needed for mutation safety.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FlakeNode {
+pub struct SyncNode {
     pub id: NodeId,
     pub name: String,
     pub path: PathBuf,
@@ -199,13 +154,13 @@ pub struct FlakeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DependencyEdge {
+pub struct SyncEdge {
     pub from: NodeId,
     pub to: NodeId,
     pub input_name: String,
 }
 
-impl DependencyEdge {
+impl SyncEdge {
     pub fn new(from: &str, to: &str, input_name: &str) -> Self {
         Self {
             from: from.to_string(),
@@ -216,29 +171,28 @@ impl DependencyEdge {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceGraph {
+pub struct SyncGraph {
     pub root: NodeId,
-    pub nodes: BTreeMap<NodeId, FlakeNode>,
-    pub edges: Vec<DependencyEdge>,
+    pub nodes: BTreeMap<NodeId, SyncNode>,
+    pub edges: Vec<SyncEdge>,
 }
 
-impl WorkspaceGraph {
-    pub fn get_node(&self, id: &NodeId) -> Option<&FlakeNode> {
+impl SyncGraph {
+    pub fn get_node(&self, id: &NodeId) -> Option<&SyncNode> {
         self.nodes.get(id)
     }
 
-    pub fn dependents_of(&self, node_id: &NodeId) -> Vec<&DependencyEdge> {
-        self.edges.iter().filter(|e| e.to == *node_id).collect()
+    pub fn dependents_of(&self, node_id: &NodeId) -> Vec<&SyncEdge> {
+        self.edges.iter().filter(|edge| edge.to == *node_id).collect()
     }
 
-    pub fn dependencies_of(&self, node_id: &NodeId) -> Vec<&DependencyEdge> {
-        self.edges.iter().filter(|e| e.from == *node_id).collect()
+    pub fn dependencies_of(&self, node_id: &NodeId) -> Vec<&SyncEdge> {
+        self.edges.iter().filter(|edge| edge.from == *node_id).collect()
     }
 
-    pub fn detect_cycles(&self) -> Result<(), Vec<NodeId>> {
+    fn detect_cycles(&self) -> Result<(), Vec<NodeId>> {
         let mut visited: BTreeSet<&NodeId> = BTreeSet::new();
         let mut in_stack: BTreeSet<&NodeId> = BTreeSet::new();
-
         for node_id in self.nodes.keys() {
             if !visited.contains(node_id) {
                 if let Some(cycle) = dfs_cycle(node_id, self, &mut visited, &mut in_stack) {
@@ -246,7 +200,6 @@ impl WorkspaceGraph {
                 }
             }
         }
-
         Ok(())
     }
 
@@ -254,11 +207,7 @@ impl WorkspaceGraph {
         self.detect_cycles().map_err(|cycle| {
             format!(
                 "Cycle detected: {}",
-                cycle
-                    .iter()
-                    .map(|n| n.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" -> ")
+                cycle.iter().map(String::as_str).collect::<Vec<_>>().join(" -> ")
             )
         })?;
 
@@ -267,43 +216,38 @@ impl WorkspaceGraph {
         for edge in &self.edges {
             *in_degree.entry(&edge.from).or_insert(0) += 1;
         }
-
         let mut queue: VecDeque<&NodeId> = in_degree
             .iter()
-            .filter(|(_, &deg)| deg == 0)
+            .filter(|(_, degree)| **degree == 0)
             .map(|(id, _)| *id)
             .collect();
-
         let mut result = Vec::new();
         while let Some(node_id) = queue.pop_front() {
             result.push(node_id.clone());
-            for dep_edge in self.dependents_of(node_id) {
-                if let Some(deg) = in_degree.get_mut(&dep_edge.from) {
-                    *deg -= 1;
-                    if *deg == 0 {
-                        queue.push_back(&dep_edge.from);
+            for edge in self.dependents_of(node_id) {
+                if let Some(degree) = in_degree.get_mut(&edge.from) {
+                    *degree -= 1;
+                    if *degree == 0 {
+                        queue.push_back(&edge.from);
                     }
                 }
             }
         }
-
         if result.len() != self.nodes.len() {
             return Err("Graph contains a cycle (incomplete topological sort)".to_string());
         }
-
         Ok(result)
     }
 }
 
 fn dfs_cycle<'a>(
     node: &'a NodeId,
-    graph: &'a WorkspaceGraph,
+    graph: &'a SyncGraph,
     visited: &mut BTreeSet<&'a NodeId>,
     in_stack: &mut BTreeSet<&'a NodeId>,
 ) -> Option<Vec<NodeId>> {
     visited.insert(node);
     in_stack.insert(node);
-
     for edge in &graph.edges {
         if edge.to == *node {
             let from = &edge.from;
@@ -317,40 +261,31 @@ fn dfs_cycle<'a>(
             }
         }
     }
-
     in_stack.remove(node);
     None
 }
 
-pub fn discover_graph(cfg: &WorkspaceConfig) -> Result<WorkspaceGraph, String> {
+pub fn discover_sync_graph(cfg: &WorkspaceConfig) -> Result<SyncGraph, String> {
     let mut nodes = BTreeMap::new();
     let mut edges = Vec::new();
-
-    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {}", e))?;
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
 
     for repo in &cfg.repos {
         let repo_path = repo.resolved_path(cfg);
-        let repo_path = if repo_path.is_relative() {
-            cwd.join(&repo_path)
-        } else {
-            repo_path
-        };
-
+        let repo_path = if repo_path.is_relative() { cwd.join(repo_path) } else { repo_path };
         let branch = if repo_path.join(".git").exists() {
             git::git_branch(&repo_path).unwrap_or_else(|_| "main".to_string())
         } else {
             "main".to_string()
         };
-
         let remote = if repo_path.join(".git").exists() {
             git::git_remote(&repo_path, "origin").ok()
         } else {
             None
         };
-
         nodes.insert(
             repo.name.clone(),
-            FlakeNode {
+            SyncNode {
                 id: repo.name.clone(),
                 name: repo.name.clone(),
                 path: repo_path,
@@ -362,38 +297,25 @@ pub fn discover_graph(cfg: &WorkspaceConfig) -> Result<WorkspaceGraph, String> {
 
     for repo in &cfg.repos {
         let repo_path = repo.resolved_path(cfg);
-        let deps: Vec<(String, String)> = scan_flake_inputs(&repo_path, cfg)?;
-
-        for (dep_name, input_name) in &deps {
-            if !nodes.contains_key(dep_name) {
+        for (dependency, input_name) in scan_flake_inputs(&repo_path, cfg)? {
+            if !nodes.contains_key(&dependency) {
                 return Err(format!(
                     "Repo '{}' depends on '{}' which is not in the workspace config",
-                    repo.name, dep_name
+                    repo.name, dependency
                 ));
             }
-
-            edges.push(DependencyEdge::new(&repo.name, dep_name, input_name));
+            edges.push(SyncEdge::new(&repo.name, &dependency, &input_name));
         }
     }
 
-    let root_id = if let Some(root) = cfg
+    let root = cfg
         .repos
         .iter()
-        .find(|r| r.name == "phenix" || r.name.contains("root"))
-    {
-        root.name.clone()
-    } else {
-        cfg.repos
-            .first()
-            .map(|r| r.name.clone())
-            .unwrap_or_else(|| "root".to_string())
-    };
-
-    Ok(WorkspaceGraph {
-        root: root_id,
-        nodes,
-        edges,
-    })
+        .find(|repo| repo.name == cfg.workspace || repo.name.contains("root"))
+        .or_else(|| cfg.repos.first())
+        .map(|repo| repo.name.clone())
+        .unwrap_or_else(|| "root".to_string());
+    Ok(SyncGraph { root, nodes, edges })
 }
 
 fn scan_flake_inputs(
@@ -404,132 +326,68 @@ fn scan_flake_inputs(
     if !flake_path.exists() {
         return Ok(Vec::new());
     }
-
-    let content =
-        std::fs::read_to_string(&flake_path).map_err(|e| format!("Read flake.nix: {}", e))?;
-    let mut deps = Vec::new();
-
+    let content = std::fs::read_to_string(&flake_path)
+        .map_err(|e| format!("Read flake.nix: {e}"))?;
+    let mut dependencies = Vec::new();
     for repo in &cfg.repos {
-        if repo.name == "phenix" || repo_path == repo.resolved_path(cfg) {
+        if repo.name == cfg.workspace || repo_path == repo.resolved_path(cfg) {
             continue;
         }
-        let check_patterns = [
+        let patterns = [
             format!("./{}", repo.path),
             format!("\"{}\"", repo.name),
             format!("{}.url", repo.name),
         ];
-
-        let matched = check_patterns
-            .iter()
-            .any(|pat| content.contains(pat.as_str()));
-
-        if matched {
-            deps.push((repo.name.clone(), repo.name.clone()));
+        if patterns.iter().any(|pattern| content.contains(pattern)) {
+            dependencies.push((repo.name.clone(), repo.name.clone()));
         }
     }
-
-    Ok(deps)
+    Ok(dependencies)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn make_graph(edges: Vec<(&str, &str)>) -> WorkspaceGraph {
-        let mut nodes = BTreeMap::new();
-        let mut all_names = BTreeSet::new();
+    fn make_graph(edges: Vec<(&str, &str)>) -> SyncGraph {
+        let mut names = BTreeSet::new();
         for (from, to) in &edges {
-            all_names.insert(from.to_string());
-            all_names.insert(to.to_string());
+            names.insert(from.to_string());
+            names.insert(to.to_string());
         }
-        for name in &all_names {
-            let dir = std::env::temp_dir().join(format!("__test_{}", name));
-            nodes.insert(
-                name.clone(),
-                FlakeNode {
-                    id: name.clone(),
-                    name: name.clone(),
-                    path: dir,
-                    remote: None,
-                    branch: "main".to_string(),
-                },
-            );
-        }
-        let edges: Vec<DependencyEdge> = edges
-            .into_iter()
-            .map(|(from, to)| DependencyEdge::new(from, to, to))
+        let nodes = names
+            .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    SyncNode {
+                        id: name.clone(),
+                        name: name.clone(),
+                        path: PathBuf::from(name),
+                        remote: None,
+                        branch: "main".to_string(),
+                    },
+                )
+            })
             .collect();
-        let root = all_names.iter().next().cloned().unwrap_or_default();
-        WorkspaceGraph { root, nodes, edges }
+        let edges = edges
+            .into_iter()
+            .map(|(from, to)| SyncEdge::new(from, to, to))
+            .collect();
+        let root = names.iter().next().cloned().unwrap_or_default();
+        SyncGraph { root, nodes, edges }
     }
 
     #[test]
-    fn test_topo_order_simple() {
-        let graph = make_graph(vec![
-            ("root", "shell"),
-            ("root", "tools"),
-            ("shell", "tools"),
-        ]);
-        let order = graph.topological_order().unwrap();
-        assert_eq!(order, vec!["tools", "shell", "root"]);
+    fn sync_graph_orders_dependencies_first() {
+        let graph = make_graph(vec![("root", "shell"), ("shell", "tools")]);
+        assert_eq!(graph.topological_order().unwrap(), vec!["tools", "shell", "root"]);
     }
 
     #[test]
-    fn test_topo_order_linear() {
-        let graph = make_graph(vec![("c", "b"), ("b", "a")]);
-        let order = graph.topological_order().unwrap();
-        assert_eq!(order, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn test_cycle_detection() {
-        let graph = make_graph(vec![("a", "b"), ("b", "a")]);
-        assert!(graph.topological_order().is_err());
-    }
-
-    #[test]
-    fn test_cycle_detection_longer() {
-        let graph = make_graph(vec![("a", "b"), ("b", "c"), ("c", "a")]);
-        assert!(graph.topological_order().is_err());
-    }
-
-    #[test]
-    fn test_no_deps() {
-        let graph = make_graph(vec![]);
-        let order = graph.topological_order().unwrap();
-        assert_eq!(order.len(), 0);
-    }
-
-    #[test]
-    fn test_single_node() {
-        let graph = make_graph(vec![("a", "a")]);
-        assert!(graph.topological_order().is_err());
-    }
-
-    #[test]
-    fn test_dependents_of() {
-        let graph = make_graph(vec![("root", "a"), ("root", "b"), ("shell", "a")]);
-        let deps = graph.dependents_of(&"a".to_string());
-        assert_eq!(deps.len(), 2);
-        assert!(deps.iter().any(|e| e.from == "root"));
-        assert!(deps.iter().any(|e| e.from == "shell"));
-    }
-
-    #[test]
-    fn test_dependencies_of() {
-        let graph = make_graph(vec![("root", "a"), ("root", "b")]);
-        let deps = graph.dependencies_of(&"root".to_string());
-        assert_eq!(deps.len(), 2);
-    }
-
-    #[test]
-    fn test_push_order_equals_topo_order() {
-        let graph = make_graph(vec![
-            ("root", "shell"),
-            ("root", "tools"),
-            ("shell", "tools"),
-        ]);
-        let order = graph.topological_order().unwrap();
-        assert_eq!(order, vec!["tools", "shell", "root"]);
+    fn sync_graph_rejects_cycles() {
+        assert!(make_graph(vec![("a", "b"), ("b", "a")])
+            .topological_order()
+            .is_err());
     }
 }

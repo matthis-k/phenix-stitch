@@ -4,7 +4,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::git;
-use crate::graph::{NodeId, WorkspaceGraph};
+use crate::graph::{NodeId, SyncGraph};
 #[allow(unused_imports)]
 use crate::model::{RepoAvailability, RepoStatus, WorkspaceConfig};
 
@@ -251,7 +251,7 @@ fn input_sync_message(node_name: &str, updates: &[InputUpdate]) -> String {
 }
 
 pub fn plan_sync(
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     statuses: &[RepoStatus],
     _cfg: &WorkspaceConfig,
 ) -> Result<ActionPlan, String> {
@@ -259,7 +259,7 @@ pub fn plan_sync(
 }
 
 pub fn plan_commit(
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     statuses: &[RepoStatus],
     _cfg: &WorkspaceConfig,
     include_push: bool,
@@ -421,7 +421,7 @@ pub struct ActionResult {
 
 pub fn execute_sync(
     plan: &ActionPlan,
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     cfg: &WorkspaceConfig,
     no_push: bool,
     messages: Option<&BTreeMap<String, String>>,
@@ -431,7 +431,7 @@ pub fn execute_sync(
 }
 
 pub fn plan_local_commit(
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     statuses: &[RepoStatus],
     cfg: &WorkspaceConfig,
 ) -> Result<ActionPlan, String> {
@@ -452,7 +452,7 @@ pub fn plan_local_commit(
 
 pub fn execute_local_commit_plan(
     plan: &ActionPlan,
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     cfg: &WorkspaceConfig,
     messages: Option<&BTreeMap<String, String>>,
     force: bool,
@@ -462,7 +462,7 @@ pub fn execute_local_commit_plan(
 
 fn execute_plan(
     plan: &ActionPlan,
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     cfg: &WorkspaceConfig,
     no_push: bool,
     messages: Option<&BTreeMap<String, String>>,
@@ -583,7 +583,7 @@ fn execute_single_action(
     action: &Action,
     _action_idx: usize,
     plan: &ActionPlan,
-    graph: &WorkspaceGraph,
+    graph: &SyncGraph,
     cfg: &WorkspaceConfig,
     no_push: bool,
     messages: Option<&BTreeMap<String, String>>,
@@ -1467,13 +1467,13 @@ mod tests {
     use super::*;
     use crate::graph;
 
-    fn make_test_graph() -> WorkspaceGraph {
+    fn make_test_graph() -> SyncGraph {
         let mut nodes = BTreeMap::new();
         for name in &["tools", "shell", "root"] {
             let dir = std::env::temp_dir().join(format!("__sync_test_{}", name));
             nodes.insert(
                 name.to_string(),
-                graph::FlakeNode {
+                graph::SyncNode {
                     id: name.to_string(),
                     name: name.to_string(),
                     path: dir,
@@ -1483,11 +1483,11 @@ mod tests {
             );
         }
         let edges = vec![
-            graph::DependencyEdge::new("shell", "tools", "tools"),
-            graph::DependencyEdge::new("root", "shell", "shell"),
-            graph::DependencyEdge::new("root", "tools", "tools"),
+            graph::SyncEdge::new("shell", "tools", "tools"),
+            graph::SyncEdge::new("root", "shell", "shell"),
+            graph::SyncEdge::new("root", "tools", "tools"),
         ];
-        WorkspaceGraph {
+        SyncGraph {
             root: "root".to_string(),
             nodes,
             edges,
