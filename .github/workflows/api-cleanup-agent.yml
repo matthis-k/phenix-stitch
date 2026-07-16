@@ -1,0 +1,32 @@
+name: API cleanup agent
+
+on:
+  push:
+    branches:
+      - cleanup/current-api-only
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inventory versioned and legacy API surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== legacy graph symbols ==='
+          rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
+            'WorkspaceDag|WorkspaceGraph|WorkspaceNode|WorkspaceEdge|FlakeNode|DependencyEdge|from_legacy|to_legacy' . || true
+          echo '=== explicit schema versions ==='
+          rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
+            'schema_version|(^|[^A-Za-z_])version[[:space:]]*:' . || true
+          echo '=== compatibility/deprecation markers ==='
+          rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
+            'legacy|compat|deprecated|alias' crates docs || true
+      - name: Baseline Rust checks
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace
