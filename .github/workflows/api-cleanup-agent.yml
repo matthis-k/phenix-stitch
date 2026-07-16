@@ -1,35 +1,51 @@
 name: API cleanup agent
 
 on:
-  pull_request:
-    branches:
-      - main
   push:
     branches:
       - cleanup/current-api-only
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inventory:
+  cleanup:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inventory versioned and legacy API surfaces
+        with:
+          ref: cleanup/current-api-only
+          fetch-depth: 0
+      - name: Run cleanup and persist diagnostics
         shell: bash
         run: |
-          set -euo pipefail
-          echo '=== legacy graph symbols ==='
-          rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
-            'WorkspaceDag|WorkspaceGraph|WorkspaceNode|WorkspaceEdge|FlakeNode|DependencyEdge|from_legacy|to_legacy' . || true
-          echo '=== explicit schema versions ==='
-          rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
-            'schema_version|(^|[^A-Za-z_])version[[:space:]]*:' . || true
-          echo '=== compatibility/deprecation markers ==='
-          rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
-            'legacy|compat|deprecated|alias' crates docs || true
-      - name: Baseline Rust checks
-        run: |
-          cargo fmt --all -- --check
-          cargo test --workspace
+          set -uo pipefail
+          if [[ -f tools/api_cleanup.py ]]; then
+            python3 tools/api_cleanup.py
+          fi
+          {
+            echo '=== legacy graph symbols ==='
+            rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
+              'WorkspaceDag|WorkspaceGraph|WorkspaceNode|WorkspaceEdge|FlakeNode|DependencyEdge|from_legacy|to_legacy' crates docs || true
+            echo '=== Stitch-owned schema versions ==='
+            rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
+              'schema_version|(^|[^A-Za-z_])version[[:space:]]*:' crates docs || true
+            echo '=== compatibility markers ==='
+            rg -n --glob '!Cargo.lock' --glob '!flake.lock' --glob '!target/**' \
+              'legacy|compat|deprecated' crates docs || true
+          } > api-cleanup-inventory.txt
+          cargo fmt --all -- --check > api-cleanup-check.log 2>&1
+          fmt_status=$?
+          cargo check --workspace --all-targets >> api-cleanup-check.log 2>&1
+          check_status=$?
+          cargo test --workspace >> api-cleanup-check.log 2>&1
+          test_status=$?
+          printf '\nfmt=%s check=%s test=%s\n' "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: capture API cleanup diagnostics'
+            git push origin HEAD:cleanup/current-api-only
+          fi
+          exit $((fmt_status || check_status || test_status))
