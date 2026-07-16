@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def rewrite(path: str, transform) -> None:
+def rewrite(path: str | Path, transform) -> None:
     target = ROOT / path
     text = target.read_text()
     updated = transform(text)
@@ -21,11 +21,11 @@ def rewrite(path: str, transform) -> None:
         target.write_text(updated)
 
 
-def remove_literal(path: str, text: str) -> None:
+def remove_literal(path: str | Path, text: str) -> None:
     rewrite(path, lambda source: source.replace(text, ""))
 
 
-def remove_regex(path: str, pattern: str) -> None:
+def remove_regex(path: str | Path, pattern: str) -> None:
     rewrite(path, lambda source: re.sub(pattern, "", source, flags=re.MULTILINE))
 
 
@@ -47,7 +47,7 @@ remove_regex(
     r'^\s*if collection\.version < 1 \{\n\s*return Err\(format!\("Unsupported recipe version \{\}", collection\.version\)\);\n\s*\}\n',
 )
 
-# Remove version fields from every Stitch-owned constructor and fixture.
+# Remove fields from every Stitch-owned constructor and fixture.
 for path in [
     "crates/stitch/src/workspace.rs",
     "crates/stitch/src/exec.rs",
@@ -60,24 +60,33 @@ for path in [
 ]:
     remove_regex(path, r"^\s*(?:schema_version|version):\s*\d+,\n")
 
-# Remove version keys from current Stitch JSON examples and MCP output.
-remove_regex("crates/stitch/src/graph/inventory.rs", r'^\s*"version":\s*\d+,\n')
+# Remove JSON schema selectors from all Stitch-owned Rust fixtures. The flake
+# lock parser is excluded because the Nix lock-file version belongs to Nix.
+for path in (ROOT / "crates").rglob("*.rs"):
+    if path == ROOT / "crates/stitch/src/graph/lock.rs":
+        continue
+    remove_regex(path.relative_to(ROOT), r'^\s*"(?:schema_version|version)":\s*[^,]+,\n')
+
+# Remove the obsolete version property from MCP output.
 remove_regex(
     "crates/stitch-mcp/src/tools.rs",
     r'^\s*"version":\s*cfg\.version,\n',
 )
 
-# Reject accidental reintroduction in Stitch-owned contracts and emitters.
-owned_files = [
+# Reject accidental reintroduction in persisted contracts. CLI `--version`
+# flags and protocol-owned server/package versions are intentionally unrelated.
+contract_files = [
     ROOT / "crates/stitch/src/model.rs",
     ROOT / "crates/stitch/src/workspace.rs",
     ROOT / "crates/stitch/src/recipe.rs",
     ROOT / "crates/stitch/src/workloop.rs",
     ROOT / "crates/stitch/src/graph/inventory.rs",
-    ROOT / "crates/stitch-cli/src/main.rs",
-    ROOT / "crates/stitch-mcp/src/tools.rs",
 ]
-for path in owned_files:
+field_pattern = re.compile(
+    r'^\s*(?:pub\s+)?(?:schema_version|version)\s*:', re.MULTILINE
+)
+json_pattern = re.compile(r'^\s*"(?:schema_version|version)"\s*:', re.MULTILINE)
+for path in contract_files:
     text = path.read_text()
-    if re.search(r"\b(?:schema_version|version)\s*:", text):
+    if field_pattern.search(text) or json_pattern.search(text):
         raise SystemExit(f"Stitch-owned version field remains in {path.relative_to(ROOT)}")
