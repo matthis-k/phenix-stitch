@@ -1,5 +1,4 @@
 {
-  "version": 2,
   "profiles": {
     "git-hook": {
       "phase": "verify",
