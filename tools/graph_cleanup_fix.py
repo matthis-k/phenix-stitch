@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Repair consumers after collapsing Stitch's graph API generations."""
+"""Finalize the one-way collapse to Stitch's current graph API."""
 
+from __future__ import annotations
+
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def replace(path: str, old: str, new: str) -> None:
+def rewrite(path: str, transform) -> None:
     target = ROOT / path
-    text = target.read_text()
-    updated = text.replace(old, new)
-    if updated != text:
+    source = target.read_text()
+    updated = transform(source)
+    if updated != source:
         target.write_text(updated)
+
+
+def replace(path: str, old: str, new: str) -> None:
+    rewrite(path, lambda source: source.replace(old, new))
 
 
 (ROOT / "crates/stitch/src/lib.rs").write_text(
@@ -52,15 +59,81 @@ replace(
     "crate::graph::discover_graph(cfg)?",
     "crate::graph::discover_sync_graph(cfg)?",
 )
-replace("crates/stitch/src/graph/render.rs", "edge.reason", "edge.kind")
-replace("crates/stitch/src/graph/validate.rs", "reason: EdgeKind::", "kind: EdgeKind::")
-replace(
-    "crates/stitch/src/graph/validate.rs",
-    "CanonicalWorkspaceGraph::from_snapshot(graph)",
-    "CanonicalWorkspaceGraph::from_draft(graph)",
+
+
+def repair_render(source: str) -> str:
+    canonical_graph_overload = re.compile(
+        r"\nfn render_graph_snapshot\(\n"
+        r"    graph: &CanonicalWorkspaceGraph,\n"
+        r"    format: RenderFormat,\n"
+        r"\) -> Result<String, String> \{\n"
+        r"    render_graph_snapshot\(&graph\.to_snapshot\(\), format\)\n"
+        r"\}\n",
+    )
+    canonical_order_overload = re.compile(
+        r"\nfn render_order_snapshot\(\n"
+        r"    graph: &CanonicalWorkspaceGraph,\n"
+        r"    order: &\[String\],\n"
+        r"    format: RenderFormat,\n"
+        r"\) -> Result<String, String> \{\n"
+        r"    render_order_snapshot\(&graph\.to_snapshot\(\), order, format\)\n"
+        r"\}\n",
+    )
+    source = canonical_graph_overload.sub("\n", source)
+    source = canonical_order_overload.sub("\n", source)
+    source = source.replace("edge.reason", "edge.kind")
+    manual_arm = '                super::EdgeKind::Manual { .. } => "manual".to_string(),\n'
+    submodule_arm = (
+        '                super::EdgeKind::SubmoduleMembership { .. } => '
+        '"submodule-membership".to_string(),\n'
+    )
+    if manual_arm in source and submodule_arm not in source:
+        source = source.replace(manual_arm, manual_arm + submodule_arm)
+    return source
+
+
+rewrite("crates/stitch/src/graph/render.rs", repair_render)
+
+
+def repair_validate(source: str) -> str:
+    source = source.replace("reason: EdgeKind::", "kind: EdgeKind::")
+    source = source.replace(
+        "CanonicalWorkspaceGraph::from_snapshot(graph)",
+        "CanonicalWorkspaceGraph::from_draft(graph)",
+    )
+    source = source.replace(
+        "validate_canonical_graph(&canonical",
+        "validate_graph(&canonical",
+    )
+    source = source.replace(
+        "pub fn validate_snapshot(\n"
+        "    graph: &crate::graph::CanonicalWorkspaceGraph,\n",
+        "pub fn validate_graph(\n"
+        "    graph: &crate::graph::CanonicalWorkspaceGraph,\n",
+    )
+    return source
+
+
+rewrite("crates/stitch/src/graph/validate.rs", repair_validate)
+
+# Current graph derivation returns the canonical graph directly. No retired
+# names or adapter vocabulary may remain in production Rust code.
+retired = re.compile(
+    r"\bWorkspaceDag\b|\bWorkspaceNode\b|\bWorkspaceEdge\b|"
+    r"\bFlakeNode\b|\bDependencyEdge\b|from_legacy|to_legacy"
 )
-replace(
-    "crates/stitch/src/graph/validate.rs",
-    "validate_canonical_graph(&canonical",
-    "validate_graph(&canonical",
-)
+for path in (ROOT / "crates").rglob("*.rs"):
+    if retired.search(path.read_text()):
+        raise SystemExit(f"retired graph API remains in {path.relative_to(ROOT)}")
+
+render = (ROOT / "crates/stitch/src/graph/render.rs").read_text()
+if render.count("fn render_graph_snapshot(") != 1:
+    raise SystemExit("render_graph_snapshot must have exactly one draft implementation")
+if render.count("fn render_order_snapshot(") != 1:
+    raise SystemExit("render_order_snapshot must have exactly one draft implementation")
+
+validate = (ROOT / "crates/stitch/src/graph/validate.rs").read_text()
+if validate.count("fn validate_snapshot(") != 1:
+    raise SystemExit("validate_snapshot must have exactly one private implementation")
+if validate.count("pub fn validate_graph(") != 1:
+    raise SystemExit("validate_graph must have exactly one canonical public entry point")
