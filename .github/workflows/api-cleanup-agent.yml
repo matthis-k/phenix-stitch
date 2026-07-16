@@ -25,15 +25,19 @@ jobs:
           api_status=$?
           python3 tools/graph_cleanup.py >> api-cleanup-check.log 2>&1
           graph_status=$?
+          python3 tools/graph_cleanup_fix.py >> api-cleanup-check.log 2>&1
+          fix_status=$?
+          cargo fmt --all >> api-cleanup-check.log 2>&1
+          fmt_apply_status=$?
           cargo fmt --all -- --check >> api-cleanup-check.log 2>&1
           fmt_status=$?
           cargo check --workspace --all-targets >> api-cleanup-check.log 2>&1
           check_status=$?
           cargo test --workspace >> api-cleanup-check.log 2>&1
           test_status=$?
-          status=$((api_status || graph_status || fmt_status || check_status || test_status))
-          printf '\napi=%s graph=%s fmt=%s check=%s test=%s\n' \
-            "$api_status" "$graph_status" "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
+          status=$((api_status || graph_status || fix_status || fmt_apply_status || fmt_status || check_status || test_status))
+          printf '\napi=%s graph=%s fix=%s fmt_apply=%s fmt=%s check=%s test=%s\n' \
+            "$api_status" "$graph_status" "$fix_status" "$fmt_apply_status" "$fmt_status" "$check_status" "$test_status" >> api-cleanup-check.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
       - name: Commit generated cleanup and diagnostics
