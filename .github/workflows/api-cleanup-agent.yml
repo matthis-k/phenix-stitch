@@ -1,6 +1,9 @@
 name: API cleanup agent
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - cleanup/current-api-only
