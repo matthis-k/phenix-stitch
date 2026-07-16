@@ -13,61 +13,44 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def replace(path: str, old: str, new: str) -> None:
+def rewrite(path: str, transform) -> None:
     target = ROOT / path
     text = target.read_text()
-    if old not in text:
-        raise SystemExit(f"expected text not found in {path}: {old!r}")
-    target.write_text(text.replace(old, new))
+    updated = transform(text)
+    if updated != text:
+        target.write_text(updated)
 
 
-def regex_replace(path: str, pattern: str, replacement: str) -> None:
-    target = ROOT / path
-    text = target.read_text()
-    updated, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
-    if count == 0:
-        raise SystemExit(f"pattern did not match in {path}: {pattern!r}")
-    target.write_text(updated)
+def remove_literal(path: str, text: str) -> None:
+    rewrite(path, lambda source: source.replace(text, ""))
 
 
-# Workspace configuration/state are always the current shape.
-replace("crates/stitch/src/model.rs", "    pub version: u32,\n", "")
-replace("crates/stitch/src/workspace.rs", "    pub version: u32,\n", "")
-replace("crates/stitch/src/workspace.rs", "        version: 2,\n", "")
-replace("crates/stitch/src/graph/inventory.rs", "            version: 2,\n", "")
+def remove_regex(path: str, pattern: str) -> None:
+    rewrite(path, lambda source: re.sub(pattern, "", source, flags=re.MULTILINE))
 
-# Changesets are not a multi-version protocol.
-replace("crates/stitch/src/model.rs", "    pub version: u32,\n", "")
-replace("crates/stitch/src/changeset/new.rs", "        version: 1,\n", "")
+
+# Workspace configuration/state and changesets always use the current shape.
+remove_literal("crates/stitch/src/model.rs", "    pub version: u32,\n")
+remove_literal("crates/stitch/src/workspace.rs", "    pub version: u32,\n")
+remove_regex("crates/stitch/src/workspace.rs", r"^\s*version:\s*\d+,\n")
+remove_literal("crates/stitch/src/changeset/new.rs", "        version: 1,\n")
+remove_regex("crates/stitch/src/graph/inventory.rs", r"^\s*version:\s*\d+,\n")
 
 # Recipes accept exactly the current object shape.
-replace("crates/stitch/src/recipe.rs", "    pub version: u32,\n", "")
-replace(
+remove_literal("crates/stitch/src/recipe.rs", "    pub version: u32,\n")
+remove_literal("crates/stitch/src/recipe.rs", "            version: 1,\n")
+remove_regex(
     "crates/stitch/src/recipe.rs",
-    "        return Ok(RecipeCollection {\n            version: 1,\n            recipes: Vec::new(),\n        });",
-    "        return Ok(RecipeCollection {\n            recipes: Vec::new(),\n        });",
-)
-replace(
-    "crates/stitch/src/recipe.rs",
-    "    if collection.version < 1 {\n        return Err(format!(\"Unsupported recipe version {}\", collection.version));\n    }\n",
-    "",
+    r'^\s*if collection\.version < 1 \{\n\s*return Err\(format!\("Unsupported recipe version \{\}", collection\.version\)\);\n\s*\}\n',
 )
 
 # Work-loop wallets likewise expose only the current schema.
-replace("crates/stitch/src/workloop.rs", "    pub schema_version: u32,\n", "")
-regex_replace(
-    "crates/stitch/src/workloop.rs",
-    r"^\s*schema_version:\s*\d+,\n",
-    "",
-)
+remove_literal("crates/stitch/src/workloop.rs", "    pub schema_version: u32,\n")
+remove_regex("crates/stitch/src/workloop.rs", r"^\s*schema_version:\s*\d+,\n")
 
 # Topology metadata is classification data, not a version negotiation surface.
-replace("crates/stitch/src/graph/inventory.rs", "    version: u32,\n", "")
-regex_replace(
-    "crates/stitch/src/graph/inventory.rs",
-    r'^\s*"version":\s*\d+,\n',
-    "",
-)
+remove_literal("crates/stitch/src/graph/inventory.rs", "    version: u32,\n")
+remove_regex("crates/stitch/src/graph/inventory.rs", r'^\s*"version":\s*\d+,\n')
 
 # Reject accidental reintroduction of Stitch-owned schema selectors.
 owned_files = [
