@@ -1,367 +1,361 @@
+Stitch-owned version field remains in crates/stitch-cli/src/main.rs
     Updating crates.io index
  Downloading crates ...
-  Downloaded anstream v1.0.0
-  Downloaded autocfg v1.5.1
   Downloaded anstyle v1.0.14
-  Downloaded anstyle-parse v1.0.0
   Downloaded anstyle-query v1.1.5
-  Downloaded heck v0.5.0
-  Downloaded cfg-if v1.0.4
-  Downloaded is_terminal_polyfill v1.70.2
-  Downloaded strsim v0.11.1
-  Downloaded colorchoice v1.0.5
-  Downloaded errno v0.3.14
+  Downloaded autocfg v1.5.1
+  Downloaded anstream v1.0.0
   Downloaded itoa v1.0.18
-  Downloaded fixedbitset v0.4.2
-  Downloaded equivalent v1.0.2
-  Downloaded serde_derive v1.0.228
-  Downloaded zmij v1.0.23
-  Downloaded utf8parse v0.2.2
-  Downloaded fastrand v2.4.1
+  Downloaded anstyle-parse v1.0.0
+  Downloaded cfg-if v1.0.4
   Downloaded quote v1.0.46
   Downloaded clap_lex v1.1.0
+  Downloaded equivalent v1.0.2
+  Downloaded fastrand v2.4.1
+  Downloaded clap_derive v4.6.1
+  Downloaded num-traits v0.2.19
   Downloaded once_cell v1.21.4
+  Downloaded clap_builder v4.6.0
+  Downloaded uuid v1.23.5
+  Downloaded fixedbitset v0.4.2
+  Downloaded colorchoice v1.0.5
+  Downloaded tempfile v3.27.0
+  Downloaded errno v0.3.14
   Downloaded iana-time-zone v0.1.65
+  Downloaded bitflags v2.13.0
+  Downloaded heck v0.5.0
+  Downloaded serde_core v1.0.228
+  Downloaded unicode-ident v1.0.24
+  Downloaded strsim v0.11.1
+  Downloaded utf8parse v0.2.2
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded serde v1.0.228
+  Downloaded zmij v1.0.23
+  Downloaded memchr v2.8.3
+  Downloaded clap v4.6.1
   Downloaded getrandom v0.4.3
   Downloaded proc-macro2 v1.0.106
-  Downloaded clap_derive v4.6.1
-  Downloaded tempfile v3.27.0
-  Downloaded bitflags v2.13.0
-  Downloaded clap v4.6.1
-  Downloaded num-traits v0.2.19
-  Downloaded unicode-ident v1.0.24
-  Downloaded serde_core v1.0.228
-  Downloaded uuid v1.23.5
-  Downloaded memchr v2.8.3
-  Downloaded serde v1.0.228
-  Downloaded indexmap v2.14.0
+  Downloaded serde_derive v1.0.228
   Downloaded serde_json v1.0.150
-  Downloaded hashbrown v0.17.1
-  Downloaded clap_builder v4.6.0
+  Downloaded indexmap v2.14.0
   Downloaded chrono v0.4.45
-  Downloaded rustix v1.1.4
+  Downloaded hashbrown v0.17.1
   Downloaded syn v2.0.118
+  Downloaded rustix v1.1.4
   Downloaded petgraph v0.6.5
   Downloaded libc v0.2.186
   Downloaded linux-raw-sys v0.12.1
    Compiling proc-macro2 v1.0.106
    Compiling quote v1.0.46
    Compiling unicode-ident v1.0.24
-   Compiling autocfg v1.5.1
    Compiling serde_core v1.0.228
-   Compiling num-traits v0.2.19
+   Compiling autocfg v1.5.1
    Compiling zmij v1.0.23
    Compiling serde_json v1.0.150
+   Compiling num-traits v0.2.19
    Compiling serde v1.0.228
    Compiling libc v0.2.186
+   Compiling syn v2.0.118
     Checking memchr v2.8.3
+   Compiling getrandom v0.4.3
     Checking itoa v1.0.18
     Checking iana-time-zone v0.1.65
-   Compiling getrandom v0.4.3
     Checking chrono v0.4.45
-    Checking hashbrown v0.17.1
-   Compiling syn v2.0.118
-    Checking cfg-if v1.0.4
     Checking equivalent v1.0.2
-    Checking indexmap v2.14.0
+    Checking hashbrown v0.17.1
+    Checking cfg-if v1.0.4
     Checking fixedbitset v0.4.2
     Checking utf8parse v0.2.2
     Checking anstyle-parse v1.0.0
-    Checking anstyle-query v1.1.5
     Checking anstyle v1.0.14
+    Checking anstyle-query v1.1.5
     Checking colorchoice v1.0.5
+    Checking indexmap v2.14.0
     Checking is_terminal_polyfill v1.70.2
-    Checking anstream v1.0.0
-   Compiling heck v0.5.0
     Checking uuid v1.23.5
-    Checking petgraph v0.6.5
+    Checking anstream v1.0.0
+   Compiling rustix v1.1.4
+   Compiling heck v0.5.0
     Checking strsim v0.11.1
     Checking clap_lex v1.1.0
-   Compiling rustix v1.1.4
     Checking clap_builder v4.6.0
+    Checking petgraph v0.6.5
     Checking bitflags v2.13.0
     Checking linux-raw-sys v0.12.1
     Checking once_cell v1.21.4
-    Checking fastrand v2.4.1
    Compiling serde_derive v1.0.228
    Compiling clap_derive v4.6.1
+    Checking fastrand v2.4.1
     Checking tempfile v3.27.0
     Checking clap v4.6.1
     Checking stitch v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch)
     Checking phenix-mcp-core v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/phenix-mcp-core)
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/exec.rs:1603:13
-     |
-1603 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1525:13
-     |
-1525 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1571:13
-     |
-1571 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1593:13
-     |
-1593 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1621:13
-     |
-1621 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1643:13
-     |
-1643 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1678:13
-     |
-1678 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1696:13
-     |
-1696 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-   --> crates/stitch/src/validate.rs:161:13
-    |
-161 |             version: 1,
-    |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0560]: struct `model::Changeset` has no field named `version`
-   --> crates/stitch/src/validate.rs:172:13
-    |
-172 |             version: 1,
-    |             ^^^^^^^ `model::Changeset` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-   --> crates/stitch/src/validate.rs:203:13
-    |
-203 |             version: 1,
-    |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0560]: struct `model::Changeset` has no field named `version`
-   --> crates/stitch/src/validate.rs:214:13
-    |
-214 |             version: 1,
-    |             ^^^^^^^ `model::Changeset` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-    Checking stitch-mcp v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch-mcp)
     Checking stitch-cli v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch-cli)
-error[E0560]: struct `LoopWallet` has no field named `schema_version`
-   --> crates/stitch-cli/src/main.rs:902:21
-    |
-902 |                     schema_version: 2,
-    |                     ^^^^^^^^^^^^^^ `LoopWallet` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0609]: no field `version` on type `WorkspaceConfig`
-   --> crates/stitch-mcp/src/tools.rs:497:32
-    |
-497 |                 "version": cfg.version,
-    |                                ^^^^^^^ unknown field
-    |
-    = note: available fields are: `workspace`, `repos`, `config_dir`
-
-error[E0560]: struct `LoopWallet` has no field named `schema_version`
-    --> crates/stitch-mcp/src/tools.rs:1524:17
-     |
-1524 |                 schema_version: 2,
-     |                 ^^^^^^^^^^^^^^ `LoopWallet` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `WorkspaceConfig` has no field named `version`
-    --> crates/stitch-mcp/src/tools.rs:2089:13
-     |
-2089 |             version: 1,
-     |             ^^^^^^^ `WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-Some errors have detailed explanations: E0560, E0609.
-For more information about an error, try `rustc --explain E0560`.
-error: could not compile `stitch-mcp` (bin "stitch-mcp" test) due to 3 previous errors
-warning: build failed, waiting for other jobs to finish...
-error: could not compile `stitch-mcp` (bin "stitch-mcp") due to 2 previous errors
-For more information about this error, try `rustc --explain E0560`.
-error: could not compile `stitch-cli` (bin "stitch" test) due to 1 previous error
-error: could not compile `stitch` (lib test) due to 12 previous errors
+    Checking stitch-mcp v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch-mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.59s
    Compiling serde_core v1.0.228
-   Compiling num-traits v0.2.19
-   Compiling zmij v1.0.23
    Compiling libc v0.2.186
+   Compiling zmij v1.0.23
+   Compiling num-traits v0.2.19
    Compiling iana-time-zone v0.1.65
-   Compiling cfg-if v1.0.4
    Compiling itoa v1.0.18
    Compiling memchr v2.8.3
-   Compiling getrandom v0.4.3
+   Compiling cfg-if v1.0.4
    Compiling chrono v0.4.45
-   Compiling hashbrown v0.17.1
+   Compiling getrandom v0.4.3
    Compiling equivalent v1.0.2
-   Compiling indexmap v2.14.0
+   Compiling hashbrown v0.17.1
    Compiling fixedbitset v0.4.2
    Compiling utf8parse v0.2.2
    Compiling anstyle-parse v1.0.0
+   Compiling indexmap v2.14.0
+   Compiling uuid v1.23.5
+   Compiling linux-raw-sys v0.12.1
    Compiling serde v1.0.228
    Compiling serde_json v1.0.150
    Compiling petgraph v0.6.5
-   Compiling uuid v1.23.5
-   Compiling anstyle-query v1.1.5
    Compiling bitflags v2.13.0
-   Compiling linux-raw-sys v0.12.1
-   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle-query v1.1.5
    Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
    Compiling anstyle v1.0.14
-   Compiling rustix v1.1.4
    Compiling anstream v1.0.0
-   Compiling strsim v0.11.1
+   Compiling rustix v1.1.4
    Compiling fastrand v2.4.1
-   Compiling clap_lex v1.1.0
-   Compiling stitch v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch)
    Compiling once_cell v1.21.4
-   Compiling clap_builder v4.6.0
+   Compiling clap_lex v1.1.0
+   Compiling strsim v0.11.1
    Compiling phenix-mcp-core v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/phenix-mcp-core)
+   Compiling stitch v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch)
+   Compiling clap_builder v4.6.0
    Compiling tempfile v3.27.0
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/exec.rs:1603:13
-     |
-1603 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1525:13
-     |
-1525 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1571:13
-     |
-1571 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1593:13
-     |
-1593 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1621:13
-     |
-1621 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1643:13
-     |
-1643 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1678:13
-     |
-1678 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-    --> crates/stitch/src/sync.rs:1696:13
-     |
-1696 |             version: 1,
-     |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-     |
-     = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-   --> crates/stitch/src/validate.rs:161:13
-    |
-161 |             version: 1,
-    |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0560]: struct `model::Changeset` has no field named `version`
-   --> crates/stitch/src/validate.rs:172:13
-    |
-172 |             version: 1,
-    |             ^^^^^^^ `model::Changeset` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0560]: struct `model::WorkspaceConfig` has no field named `version`
-   --> crates/stitch/src/validate.rs:203:13
-    |
-203 |             version: 1,
-    |             ^^^^^^^ `model::WorkspaceConfig` does not have this field
-    |
-    = note: all struct fields are already assigned
-
-error[E0560]: struct `model::Changeset` has no field named `version`
-   --> crates/stitch/src/validate.rs:214:13
-    |
-214 |             version: 1,
-    |             ^^^^^^^ `model::Changeset` does not have this field
-    |
-    = note: all struct fields are already assigned
-
    Compiling clap v4.6.1
-For more information about this error, try `rustc --explain E0560`.
-error: could not compile `stitch` (lib test) due to 12 previous errors
-warning: build failed, waiting for other jobs to finish...
+   Compiling stitch-mcp v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch-mcp)
+   Compiling stitch-cli v0.1.0 (/home/runner/work/phenix-stitch/phenix-stitch/crates/stitch-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.30s
+     Running unittests src/lib.rs (target/debug/deps/phenix_mcp_core-192c180ff1172c86)
 
-script=0 fmt=0 check=101 test=101
+running 4 tests
+test mcp::tests::all_supported_path_fields_are_collected ... ok
+test mcp::tests::repo_argument_is_subject_to_root_validation ... ok
+test result::tests::failure_text_strips_terminal_control_sequences ... ok
+test result::tests::tail_is_unicode_safe ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/stitch-7033727ca89ad82f)
+
+running 159 tests
+test exec::condition_tests::named_step_predicates_express_domain_conditions ... ok
+test exec::tests::test_closure_connected_combines_both ... ok
+test exec::tests::test_closure_downstream_traversal ... ok
+test config::tests::explicit_marker_defines_workspace_without_repos_directory ... ok
+test exec::tests::test_closure_expand_all ... ok
+test config::tests::nearest_workspace_container_wins ... ok
+test exec::tests::test_closure_expand_self ... ok
+test exec::tests::discovered_graph_does_not_require_topology_metadata ... ok
+test exec::tests::test_closure_upstream_traversal ... ok
+test exec::tests::test_execute_empty_shell_argv_fails_clearly ... ok
+test exec::tests::test_downstream_only_excludes_direct_selection ... FAILED
+test exec::tests::test_dry_run_returns_ok_report ... FAILED
+test exec::tests::test_invalid_closure_fails ... ok
+test exec::tests::test_invalid_condition_fails ... ok
+test exec::tests::test_explicit_node_selection_single ... FAILED
+test exec::tests::test_invalid_order_fails ... ok
+test exec::tests::test_explicit_node_unknown_fails ... ok
+test exec::tests::test_parse_closure_mode ... ok
+test exec::tests::test_parse_condition ... ok
+test exec::tests::test_parse_execution_mode ... ok
+test exec::tests::test_parse_order_mode ... ok
+test exec::tests::test_parse_selection_mode ... ok
+test exec::tests::test_mutating_recipe_requires_apply ... FAILED
+test exec::tests::test_mutating_with_dry_run_ok ... FAILED
+test exec::tests::test_stable_order_returns_config_order ... ok
+test exec::tests::test_readonly_does_not_require_apply ... FAILED
+test exec::tests::test_git_builtin_ok ... ok
+test exec::tests::test_step_condition_always_included ... FAILED
+test exec::tests::test_topological_sort_consumers_first ... ok
+test exec::tests::test_topological_sort_cycle_fails ... ok
+test exec::tests::test_topological_sort_providers_first ... ok
+test git::tests::parse_porcelain_copy_arrow_format ... ok
+test git::tests::parse_porcelain_ignored_skipped ... ok
+test git::tests::parse_porcelain_rename_arrow_format ... ok
+test git::tests::parse_porcelain_staged_and_unstaged_same_file ... ok
+test git::tests::parse_porcelain_staged_modified ... ok
+test git::tests::parse_porcelain_untracked ... ok
+test git::tests::parse_porcelain_worktree_modified_preserves_leading_space ... ok
+test git::tests::test_parse_porcelain_all_staged ... ok
+test git::tests::test_parse_porcelain_clean ... ok
+test git::tests::test_parse_porcelain_dirty ... ok
+test git::tests::test_parse_porcelain_staged_unstaged_same_file ... ok
+test git::tests::test_parse_porcelain_untracked_only ... ok
+test exec::tests::test_unknown_builtin_fails ... ok
+test graph::canonical::tests::canonical_graph_preserves_layers ... ok
+test graph::canonical::tests::canonical_graph_provider_consumer_edge_direction ... ok
+test graph::canonical::tests::canonical_graph_uses_stable_digraph_and_preserves_input_name ... ok
+test graph::lock::tests::test_build_workspace_aliases ... ok
+test graph::lock::tests::test_input_target_name_array ... ok
+test graph::lock::tests::test_input_target_name_string ... ok
+test graph::lock::tests::test_normalize_git_url_ssh ... ok
+test graph::inventory::tests::workspace_config_is_the_membership_authority ... ok
+test graph::inventory::tests::metadata_only_classifies_existing_members ... ok
+test graph::inventory::tests::metadata_cannot_add_workspace_members ... ok
+test graph::lock::tests::test_normalize_github_id ... ok
+test graph::lock::tests::test_parse_synthetic_lock ... ok
+test graph::planner::tests::planner_orders_providers_before_consumers ... ok
+test graph::planner::tests::planner_tracks_exact_direct_input_name ... ok
+test graph::spec::tests::draft_dedups_by_input_name_not_repo_only ... ok
+test graph::tests::test_cycle_detection ... ok
+test graph::strategy::tests::composite_dedups_strategy_edges ... ok
+test graph::tests::test_cycle_detection_longer ... ok
+test graph::tests::test_dependencies_of ... ok
+test graph::tests::test_dependents_of ... ok
+test graph::tests::test_push_order_equals_topo_order ... ok
+test graph::tests::test_single_node ... ok
+test graph::tests::test_no_deps ... ok
+test graph::tests::test_topo_order_linear ... ok
+test graph::tests::test_topo_order_simple ... ok
+test graph::topo::tests::test_order_deterministic_by_layer_and_id ... ok
+test graph::topo::tests::test_provider_before_consumer_basic ... ok
+test graph::topo::tests::test_provider_before_consumer_cycle ... ok
+test graph::validate::tests::test_cycle_detection ... ok
+test graph::validate::tests::test_cycle_report_string ... ok
+test graph::validate::tests::test_duplicate_edge_warning ... ok
+test graph::validate::tests::test_folder_layer ... ok
+test graph::validate::tests::test_external_input_multi_owner_warning ... ok
+test graph::validate::tests::test_layer_violation ... ok
+test graph::validate::tests::test_missing_repo_path_detected ... ok
+test graph::validate::tests::test_layer_ok ... ok
+test graph::validate::tests::test_missing_repo_path_ok_with_tempdir ... ok
+test graph::validate::tests::test_missing_repo_path_skips_empty_path ... ok
+test graph::validate::tests::test_no_layer_violation ... ok
+test graph::validate::tests::test_non_strict_mode_missing_layer_info ... ok
+test graph::validate::tests::test_path_layer_match_ok ... ok
+test graph::validate::tests::test_path_layer_mismatch_ignores_root ... ok
+test graph::validate::tests::test_path_layer_mismatch ... ok
+test graph::validate::tests::test_producer_depends_on_pkgs_aggregator ... ok
+test graph::validate::tests::test_producer_depends_on_producer ... ok
+test graph::validate::tests::test_root_dependency_violation ... ok
+test graph::validate::tests::test_same_layer_violation_mutual ... ok
+test graph::validate::tests::test_strict_mode_missing_layer_info ... ok
+test graph::validate::tests::test_same_layer_violation_detected ... ok
+test graph::validate::tests::test_unknown_source_node ... ok
+test graph::validate::tests::test_unknown_target_node ... ok
+test graph::validate::tests::test_url_mismatch_detected ... ok
+test graph::validate::tests::test_url_mismatch_ok ... ok
+test graph::validate::tests::test_url_mismatch_ok_no_git_suffix ... ok
+test graph::validate::tests::test_url_mismatch_ok_ssh ... ok
+test graph::validate::tests::test_url_mismatch_ssh_style ... ok
+test graph::validate::tests::test_url_repo_name_https_no_git_suffix ... ok
+test graph::validate::tests::test_url_repo_name_plain_path ... ok
+test graph::validate::tests::test_url_repo_name_https ... ok
+test graph::validate::tests::test_url_repo_name_ssh ... ok
+test graph::validate::tests::test_url_repo_name_ssh_no_git_suffix ... ok
+test graph::validate::tests::test_valid_graph ... ok
+test graph::validate::tests::test_valid_workspace_full_path_layer_consistency ... ok
+test graph::validate::tests::test_validate_canonical_graph_preserves_rule_coverage ... ok
+test model::tests::test_add_trailers_trailing_newline ... ok
+test model::tests::test_add_trailers ... ok
+test model::tests::test_generate_changeset_id ... ok
+test model::tests::test_slugify ... ok
+test recipe::tests::test_resolve_recipe_invalid_closure ... ok
+test recipe::tests::test_resolve_recipe_invalid_condition ... ok
+test recipe::tests::test_resolve_recipe_invalid_order ... ok
+test recipe::tests::test_resolve_recipe_status ... ok
+test recipe::tests::test_resolve_recipe_unknown_builtin_fails ... ok
+test sync::tests::action_commit_message_carries_replay_identity ... ok
+test sync::tests::test_generate_transaction_id ... ok
+test sync::tests::test_input_sync_message ... ok
+test sync::tests::test_plan_push_order_equals_commit_order ... ok
+test sync::tests::test_plan_sync_dirty_shell ... ok
+test sync::tests::test_plan_sync_dirty_root ... ok
+test sync::tests::test_plan_sync_dirty_tools_and_shell ... ok
+test sync::tests::test_plan_sync_dirty_tools ... ok
+test sync::tests::test_plan_sync_no_dirty ... ok
+test sync::tests::test_plan_sync_uses_exact_flake_input_name ... ok
+test time::tests::timestamp_is_second_precision_rfc3339 ... ok
+test validate::tests::test_validate_non_existent_repo ... ok
+test sync::tests::test_update_flake_lock_input_fails_without_nix ... ok
+test workloop::tests::test_blocker_kinds_serialize ... ok
+test workloop::tests::test_detect_backend_on_nonexistent_repo ... ok
+test validate::tests::test_validate_no_message_for_commit_action ... ok
+test sync::tests::committed_action_head_recovers_the_exact_action ... ok
+test workloop::tests::test_git_checkpoint ... ok
+test workloop::tests::test_git_current_change ... ok
+test workloop::tests::test_git_create_rc ... ok
+test workloop::tests::git_publish_verifies_remote_and_is_idempotent ... ok
+test workloop::tests::test_handoff_packet ... ok
+test workloop::tests::test_jj_backend_auto_detect_path ... ok
+test workloop::tests::test_jj_backend_detect_on_temp_dir ... ok
+test workloop::tests::test_jj_create_rc ... ok
+test workloop::tests::test_git_publish_no_remote ... ok
+test workloop::tests::test_jj_finalize_candidate ... ok
+test workloop::tests::test_jj_publish_no_remote ... ok
+test workloop::tests::test_state_machine_valid_transitions ... ok
+test workloop::tests::test_timestamp_now ... ok
+test workloop::tests::test_valid_actions_for_states ... ok
+test workloop::tests::transition_updates_revision_and_actions ... ok
+test workloop::tests::wallet_feature_cannot_escape_wallet_directory ... ok
+test workspace::tests::empty_repository_pattern_is_rejected ... ok
+test workspace::tests::glob_pattern_supports_star_and_question_mark ... ok
+test workspace::tests::parses_supported_remote_forms ... ok
+test workspace::tests::repository_matcher_combines_owner_and_pattern ... ok
+test workspace::tests::state_file_uses_workspace_name ... ok
+test workspace::tests::unconstrained_policy_does_not_promote_external_locked_inputs ... ok
+test workloop::tests::test_wallet_roundtrip ... ok
+test workloop::tests::test_git_finalize_candidate ... ok
+test workloop::tests::test_git_snapshot ... ok
+
+failures:
+
+---- exec::tests::test_downstream_only_excludes_direct_selection stdout ----
+
+thread 'exec::tests::test_downstream_only_excludes_direct_selection' (4075) panicked at crates/stitch/src/exec.rs:2087:47:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_1/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- exec::tests::test_dry_run_returns_ok_report stdout ----
+
+thread 'exec::tests::test_dry_run_returns_ok_report' (4076) panicked at crates/stitch/src/exec.rs:2150:52:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_2/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+
+---- exec::tests::test_explicit_node_selection_single stdout ----
+
+thread 'exec::tests::test_explicit_node_selection_single' (4078) panicked at crates/stitch/src/exec.rs:2072:47:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_4/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+
+---- exec::tests::test_mutating_recipe_requires_apply stdout ----
+
+thread 'exec::tests::test_mutating_recipe_requires_apply' (4084) panicked at crates/stitch/src/exec.rs:1825:52:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_7/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+
+---- exec::tests::test_mutating_with_dry_run_ok stdout ----
+
+thread 'exec::tests::test_mutating_with_dry_run_ok' (4085) panicked at crates/stitch/src/exec.rs:1856:52:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_8/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+
+---- exec::tests::test_readonly_does_not_require_apply stdout ----
+
+thread 'exec::tests::test_readonly_does_not_require_apply' (4092) panicked at crates/stitch/src/exec.rs:1883:52:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_9/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+
+---- exec::tests::test_step_condition_always_included stdout ----
+
+thread 'exec::tests::test_step_condition_always_included' (4094) panicked at crates/stitch/src/exec.rs:2127:52:
+called `Result::unwrap()` on an `Err` value: "Cannot derive Stitch DAG from discovered workspace: parse error: flake-locks: Parse metadata /tmp/phenix_stitch_exec_tests_4065_10/.stitch/topology.json: unknown field `version`, expected `workspace` or `repos` at line 2 column 23"
+
+
+failures:
+    exec::tests::test_downstream_only_excludes_direct_selection
+    exec::tests::test_dry_run_returns_ok_report
+    exec::tests::test_explicit_node_selection_single
+    exec::tests::test_mutating_recipe_requires_apply
+    exec::tests::test_mutating_with_dry_run_ok
+    exec::tests::test_readonly_does_not_require_apply
+    exec::tests::test_step_condition_always_included
+
+test result: FAILED. 152 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `-p stitch --lib`
+
+script=1 fmt=0 check=0 test=101

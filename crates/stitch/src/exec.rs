@@ -1600,7 +1600,6 @@ mod tests {
         .unwrap();
 
         WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![
                 crate::model::RepoConfig {

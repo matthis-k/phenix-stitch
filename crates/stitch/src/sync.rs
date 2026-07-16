@@ -1522,7 +1522,6 @@ mod tests {
             make_status("root", false),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
@@ -1568,7 +1567,6 @@ mod tests {
             make_status("root", false),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
@@ -1590,7 +1588,6 @@ mod tests {
             make_status("root", false),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
@@ -1618,7 +1615,6 @@ mod tests {
             make_status("root", true),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
@@ -1640,7 +1636,6 @@ mod tests {
             make_status("root", false),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
@@ -1675,7 +1670,6 @@ mod tests {
             make_status("root", false),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
@@ -1693,7 +1687,6 @@ mod tests {
             make_status("root", true),
         ];
         let cfg = WorkspaceConfig {
-            version: 1,
             workspace: "test".to_string(),
             repos: vec![],
             config_dir: None,
