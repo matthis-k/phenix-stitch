@@ -1,0 +1,35 @@
+name: Repair Stitch migration
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/repair-refine-workflow.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - name: Correct generated migration source and grep sequencing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/refine-stitch-scope.yml')
+          s = p.read_text()
+          s = s.replace('use stitch::exec::{ExecutionScope, SelectionMode};', 'use stitch::exec::ExecutionScope;')
+          s = s.replace('ClosureMode, ExecutionMode, ExecutionNode, ExecutionPlan,\n              ExecutionReport, ExecutionScope, OrderMode, RunOptions, SelectionMode,', 'ClosureMode, ExecutionMode, ExecutionNode, ExecutionPlan,\n              ExecutionReport, ExecutionScope, RunOptions, SelectionMode,')
+          s = s.replace("          ! git grep -n -i '\\btend\\b'\n\n          rm -f .github/workflows/refine-stitch-scope.yml", "          rm -f .github/workflows/refine-stitch-scope.yml\n          ! git grep -n -i '\\btend\\b'")
+          p.write_text(s)
+          PY
+          rm -f .github/workflows/repair-refine-workflow.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: make Stitch migration self-verifying"
+          git push
