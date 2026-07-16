@@ -14,6 +14,8 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
+            extra-substituters = https://devenv.cachix.org
+            extra-trusted-public-keys = devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
       - name: Correct and execute queued scope migration
         run: |
           set -uo pipefail
@@ -32,6 +34,17 @@ jobs:
 
           flake = Path("flake.nix")
           text = flake.read_text()
+          if "devenv.cachix.org" not in text:
+              marker = "inputs = {"
+              index = text.index(marker)
+              indent = text[text.rfind("\n", 0, index) + 1:index]
+              cache = (
+                  f'{indent}nixConfig = {{\n'
+                  f'{indent}  extra-substituters = [ "https://devenv.cachix.org" ];\n'
+                  f'{indent}  extra-trusted-public-keys = [ "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=" ];\n'
+                  f'{indent}}};\n\n'
+              )
+              text = text[:index] + cache + text[index:]
           if "devenv-root" not in text:
               marker = "inputs = {"
               index = text.index(marker)
@@ -43,7 +56,8 @@ jobs:
                   f'{child}nix2container = {{\n{child}  url = "github:nlewo/nix2container";\n{child}  inputs.nixpkgs.follows = "nixpkgs";\n{child}}};\n'
                   f'{child}mk-shell-bin.url = "github:rrbutani/nix-mk-shell-bin";\n'
               )
-              flake.write_text(text[:line_end] + addition + text[line_end:])
+              text = text[:line_end] + addition + text[line_end:]
+          flake.write_text(text)
 
           for name in ["devenv.nix", "caretaker.nix", "crates/caretaker.nix", "modules/caretaker.nix", ".github/workflows/ci.yml"]:
               path = Path(name)
@@ -77,7 +91,7 @@ jobs:
           if (( status != 0 )); then
             git reset --hard HEAD
             git clean -fdx
-            tail -n 700 /tmp/maintenance.log > .maintenance-failure.log
+            { echo "migration_exit_status=$status"; tail -n 700 /tmp/maintenance.log; } > .maintenance-failure.log
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add .maintenance-failure.log
