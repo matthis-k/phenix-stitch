@@ -1568,6 +1568,8 @@ mod tests {
                 "pins": { "locked": { "type": "path", "path": "../00-pins/pins" } }
               },
               "root": "root",
+              "version": 7
+            }"#,
         )
         .unwrap();
         std::fs::write(
@@ -1578,6 +1580,8 @@ mod tests {
                 "tools": { "locked": { "type": "path", "path": "../../02-producers/tools" } }
               },
               "root": "root",
+              "version": 7
+            }"#,
         )
         .unwrap();
         std::fs::write(

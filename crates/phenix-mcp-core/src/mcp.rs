@@ -256,6 +256,12 @@ impl McpServer {
                         },
                         "serverInfo": {
                             "name": self.context.server_name,
+                            "version": self.context.server_version
+                        }
+                    }
+                }))
+            }
+            "notifications/initialized" => None,
             "notifications/cancelled" => None,
             "tools/list" => {
                 let tools_json: Vec<Value> = self
