@@ -1,6 +1,9 @@
 name: Run queued maintenance
 on: { pull_request: {} }
 permissions: { contents: write }
+concurrency:
+  group: caretaker-${{ github.repository }}
+  cancel-in-progress: true
 jobs:
   run:
     if: github.event.pull_request.head.repo.full_name == github.repository
@@ -31,7 +34,7 @@ jobs:
           cat > /tmp/patch-devenv.py <<'PY'
           import re
           from pathlib import Path
-
+          root_override = '--override-input devenv-root "file+file://"<(printf %s "$PWD")'
           flake = Path("flake.nix")
           text = flake.read_text()
           if "devenv.cachix.org" not in text:
@@ -58,32 +61,44 @@ jobs:
               )
               text = text[:line_end] + addition + text[line_end:]
           flake.write_text(text)
-
           for name in ["devenv.nix", "caretaker.nix", "crates/caretaker.nix", "modules/caretaker.nix", ".github/workflows/ci.yml"]:
               path = Path(name)
               if not path.exists():
                   continue
-              value = path.read_text().replace("nix flake check ", "nix flake check --no-pure-eval ")
+              value = path.read_text()
               if name == "devenv.nix":
                   value = re.sub(r'\n\s+presentable = \{.*?\n\s+\};', '', value, flags=re.S)
+              if name.endswith("caretaker.nix"):
+                  value = re.sub(r'exec = "nix flake check (?:--no-pure-eval )?--print-build-logs --keep-going";', 'exec = \'\'nix flake check ' + root_override + ' --print-build-logs --keep-going\'\';', value)
               if name == ".github/workflows/ci.yml":
+                  value = value.replace("nix flake check --no-pure-eval ", "nix flake check " + root_override + " ")
+                  value = value.replace("nix develop --no-pure-eval --command devenv test", "nix develop " + root_override + " --command devenv test")
                   lines = []
                   for line in value.splitlines():
                       if "git grep" in line and "tend" in line.lower():
                           indent = line[: len(line) - len(line.lstrip())]
-                          lines.extend([
-                              indent + "needle=\"$(printf 'te%s' 'nd')\"",
-                              indent + "! git grep -ni \"$needle\"",
-                          ])
+                          lines.extend([indent + "needle=\"$(printf 'te%s' 'nd')\"", indent + "! git grep -ni \"$needle\""])
                       else:
                           lines.append(line)
                   value = "\n".join(lines) + "\n"
               path.write_text(value)
           PY
           sed -n '/^        run: |$/,$p' .github/workflows/refine-stitch-scope.yml | tail -n +2 | sed 's/^          //' > /tmp/migrate.sh
-          sed -i 's/nix flake check /nix flake check --no-pure-eval /g' /tmp/migrate.sh
           sed -i '/git grep.*tend/Id' /tmp/migrate.sh
           sed -i '/^nix flake update$/i python3 /tmp/patch-devenv.py\ngit add -A' /tmp/migrate.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/migrate.sh')
+          root = '--override-input devenv-root "file+file://"<(printf %s "$PWD")'
+          lines = []
+          for line in path.read_text().splitlines():
+              if line.startswith('nix flake check '):
+                  line = line.replace('nix flake check --no-pure-eval ', 'nix flake check ' + root + ' ')
+              if line.startswith('nix develop --no-pure-eval --command devenv test'):
+                  line = 'nix develop ' + root + ' --command devenv test'
+              lines.append(line)
+          path.write_text('\n'.join(lines) + '\n')
+          PY
           set +e
           bash /tmp/migrate.sh 2>&1 | tee /tmp/maintenance.log
           status=${PIPESTATUS[0]}
