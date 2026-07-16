@@ -19,21 +19,6 @@ fn render_graph_snapshot(
     }
 }
 
-fn render_graph_snapshot(
-    graph: &CanonicalWorkspaceGraph,
-    format: RenderFormat,
-) -> Result<String, String> {
-    render_graph_snapshot(&graph.to_snapshot(), format)
-}
-
-fn render_order_snapshot(
-    graph: &CanonicalWorkspaceGraph,
-    order: &[String],
-    format: RenderFormat,
-) -> Result<String, String> {
-    render_order_snapshot(&graph.to_snapshot(), order, format)
-}
-
 pub fn render_graph_derive(
     graph: &CanonicalWorkspaceGraph,
     format: RenderFormat,
@@ -258,6 +243,7 @@ fn render_graph_text(graph: &WorkspaceGraphDraft) -> Result<String, String> {
                     format!("input={input_name}")
                 }
                 super::EdgeKind::Manual { .. } => "manual".to_string(),
+                super::EdgeKind::SubmoduleMembership { .. } => "submodule-membership".to_string(),
             };
             out.push_str(&format!(
                 "  {:<20} -> {:<20}  {reason}\n",

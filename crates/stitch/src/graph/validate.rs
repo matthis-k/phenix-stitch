@@ -289,7 +289,7 @@ fn validate_snapshot(graph: &WorkspaceGraphDraft, opts: &ValidateOptions) -> Gra
     }
 }
 
-pub fn validate_snapshot(
+pub fn validate_graph(
     graph: &crate::graph::CanonicalWorkspaceGraph,
     opts: &ValidateOptions,
 ) -> GraphValidationReport {
