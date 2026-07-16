@@ -1,0 +1,60 @@
+name: Final API cleanup
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cleanup/current-api-only
+          fetch-depth: 0
+      - name: Remove final stale adapter and fix regression test
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          model = Path('crates/stitch/src/model.rs')
+          text = model.read_text()
+          text = text.replace(
+              'r#"{\\"version\\":1,\\"workspace\\":\\"test\\",\\"repos\\":[]}"#',
+              'r#"{"version":1,"workspace":"test","repos":[]}"#',
+          )
+          model.write_text(text)
+
+          canonical = Path('crates/stitch/src/graph/canonical.rs')
+          text = canonical.read_text()
+          text, count = re.subn(
+              r'\n    pub\(crate\) fn to_sync_graph\(.*?\n    \}\n\n    pub fn flake_input_names_for_direct_dependencies',
+              '\n    pub fn flake_input_names_for_direct_dependencies',
+              text,
+              flags=re.DOTALL,
+          )
+          if count != 1:
+              raise SystemExit(f'expected one obsolete to_sync_graph adapter, found {count}')
+          canonical.write_text(text)
+          PY
+      - name: Validate final source
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo check --workspace --all-targets
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Commit final source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/stitch/src/model.rs crates/stitch/src/graph/canonical.rs
+          if ! git diff --cached --quiet; then
+            git commit -m 'refactor: remove final stale API adapter'
+            git push origin HEAD:cleanup/current-api-only
+          fi
