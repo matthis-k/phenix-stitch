@@ -44,6 +44,12 @@ enum WorkspaceCommand {
         #[arg(long)]
         json: bool,
     },
+    Inventory {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -119,7 +125,7 @@ fn run() -> Result<(), String> {
 fn workspace(command: WorkspaceCommand) -> Result<(), String> {
     match command {
         WorkspaceCommand::Discover { workspace, json } => {
-            let config = stitch::workspace::load_workspace_config(&workspace)?;
+            let config = stitch::config::load_workspace_root(&workspace)?;
             if json {
                 println!(
                     "{}",
@@ -132,13 +138,34 @@ fn workspace(command: WorkspaceCommand) -> Result<(), String> {
             }
             Ok(())
         }
+        WorkspaceCommand::Inventory { workspace, json } => {
+            let repositories = stitch::locked_workspace_inventory(&workspace)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&repositories)
+                        .map_err(|error| error.to_string())?
+                );
+            } else {
+                for repository in repositories {
+                    println!(
+                        "{}\t{}\t{}",
+                        repository.name,
+                        repository.path,
+                        repository.remote.as_deref().unwrap_or("")
+                    );
+                }
+            }
+            Ok(())
+        }
     }
 }
 
 fn graph(command: GraphCommand) -> Result<(), String> {
     match command {
         GraphCommand::Derive { workspace, json } => {
-            let graph = stitch::graph::derive_workspace_graph(&workspace, None)
+            let config = stitch::config::load_workspace_root(&workspace)?;
+            let graph = stitch::graph::derive_workspace_graph_from_config(&config, None)
                 .map_err(|error| error.to_string())?;
             print_graph(&graph, json)
         }
@@ -147,7 +174,8 @@ fn graph(command: GraphCommand) -> Result<(), String> {
             strict,
             json,
         } => {
-            let graph = stitch::graph::derive_workspace_graph(&workspace, None)
+            let config = stitch::config::load_workspace_root(&workspace)?;
+            let graph = stitch::graph::derive_workspace_graph_from_config(&config, None)
                 .map_err(|error| error.to_string())?;
             let report =
                 stitch::graph::validate_graph(&graph, &stitch::graph::ValidateOptions { strict });
@@ -175,7 +203,7 @@ fn graph(command: GraphCommand) -> Result<(), String> {
             order,
             json,
         } => {
-            let config = stitch::workspace::load_workspace_config(&workspace)?;
+            let config = stitch::config::load_workspace_root(&workspace)?;
             let scope = ExecutionScope {
                 selection: SelectionMode::All,
                 explicit_nodes: Vec::new(),

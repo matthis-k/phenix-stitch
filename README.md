@@ -21,7 +21,28 @@ Repository-local explicit graph metadata is optional:
 }
 ```
 
-Stitch does not know how a repository is tested, formatted, committed, or published. Compose those operations at the command line, for example `stitch exec ... -- devenv test`.
+Stitch does not know how a repository is tested, formatted, committed, published, cloned, pulled, or deleted. Compose repository operations outside Stitch.
+
+## Workspace inventory
+
+A workspace root may commit `.stitch-workspace.json` as a discovery policy without committing a mutable repository inventory:
+
+```json
+{
+  "owner": "matthis-k",
+  "repository_pattern": "phenix-*",
+  "search_roots": ["repos"]
+}
+```
+
+`workspace inventory` reports every matching GitHub repository in the complete root lock graph, including transitive inputs. It returns the desired local path and canonical remote but performs no mutation.
+
+```sh
+stitch workspace inventory .
+stitch workspace inventory . --json
+```
+
+A separate workspace tool can consume this output to clone, update, or remove repositories while Stitch remains a read-only source of workspace structure.
 
 ## Repository maintenance
 
