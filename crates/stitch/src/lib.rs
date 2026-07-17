@@ -21,7 +21,6 @@ pub use graph::{
     PlannedDagNode, RepoRole, ValidateOptions, WorkspaceDiscovery, WorkspaceGraphDraft,
 };
 pub use workspace_manage::{
-    clean_workspace, load_policy as load_workspace_policy, locked_workspace_repositories,
-    populate_workspace, resolve_management_policy, sync_workspace, WorkspaceAction,
-    WorkspaceActionKind, WorkspaceMutationReport, WORKSPACE_POLICY_FILE,
+    load_policy as load_workspace_policy, locked_workspace_inventory, resolve_policy,
+    WORKSPACE_POLICY_FILE,
 };
