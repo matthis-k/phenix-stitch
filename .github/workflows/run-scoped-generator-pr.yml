@@ -120,6 +120,8 @@ jobs:
           PY
 
           rm -f \
+            crates/stitch/src/validate.rs \
+            crates/stitch/src/time.rs \
             .github/workflows/prepare-scoped-stitch-pr.yml \
             .github/workflows/refine-stitch-scope.yml \
             .github/workflows/run-scoped-generator-pr.yml \
