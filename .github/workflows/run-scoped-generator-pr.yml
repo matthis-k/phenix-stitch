@@ -151,9 +151,17 @@ jobs:
             exit 1
           fi
 
-          needle="$(printf 'te%s' 'nd')"
-          ! git grep -ni "$needle"
-          ! git grep -n -E 'workloop|changeset|recipe|hooks install|sync --'
+          audit_status=0
+          if git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)' >> generator.log 2>&1; then
+            audit_status=1
+          fi
+          if git grep -niE 'workloop|changeset|recipe|hooks install|sync --' >> generator.log 2>&1; then
+            audit_status=1
+          fi
+          if (( audit_status != 0 )); then
+            tail -n 200 generator.log
+            exit 1
+          fi
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
