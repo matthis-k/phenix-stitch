@@ -21,11 +21,11 @@ Repository-local explicit graph metadata is optional:
 }
 ```
 
-Stitch does not know how a repository is tested, formatted, committed, or published. Compose those operations at the command line, for example `stitch exec ... -- devenv test`.
+Stitch does not know how a repository is tested, formatted, committed, published, cloned, pulled, or deleted. Compose repository operations outside Stitch.
 
-## Managed workspaces
+## Workspace inventory
 
-A workspace root may commit `.stitch-workspace.json` as a discovery policy without committing a repository inventory:
+A workspace root may commit `.stitch-workspace.json` as a discovery policy without committing a mutable repository inventory:
 
 ```json
 {
@@ -35,23 +35,14 @@ A workspace root may commit `.stitch-workspace.json` as a discovery policy witho
 }
 ```
 
-Stitch derives the desired repositories from all matching GitHub nodes in the root `flake.lock`, including transitive inputs.
+`workspace inventory` reports every matching GitHub repository in the complete root lock graph, including transitive inputs. It returns the desired local path and canonical remote but performs no mutation.
 
 ```sh
-# Preview missing clones.
-stitch workspace populate .
-
-# Clone missing repositories into the configured search root.
-stitch workspace populate . --apply
-
-# Preview obsolete Stitch-managed clones.
-stitch workspace clean .
-
-# Populate and prune obsolete managed clones.
-stitch workspace sync . --prune --apply
+stitch workspace inventory .
+stitch workspace inventory . --json
 ```
 
-Cleanup is deliberately conservative. Stitch only removes repositories that it cloned and recorded in its XDG state. Unknown directories are untouched, changed remotes are blocked, and dirty repositories require both `--apply` and `--force`.
+A separate workspace tool can consume this output to clone, update, or remove repositories while Stitch remains a read-only source of workspace structure.
 
 ## Repository maintenance
 
