@@ -22,3 +22,13 @@ Repository-local explicit graph metadata is optional:
 ```
 
 Stitch does not know how a repository is tested, formatted, committed, or published. Compose those operations at the command line, for example `stitch exec ... -- devenv test`.
+
+## Repository maintenance
+
+The repository uses standalone devenv tasks. The project flake remains independent from devenv.
+
+```sh
+devenv test
+devenv tasks run maintenance:check
+devenv tasks run maintenance:fix
+```
