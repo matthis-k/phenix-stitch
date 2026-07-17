@@ -5,6 +5,7 @@ pub mod graph;
 pub mod model;
 pub mod status;
 pub mod workspace;
+pub mod workspace_manage;
 
 pub use exec::{
     build_plan, build_scope, parse_closure_mode, parse_execution_mode, parse_order_mode,
@@ -18,4 +19,9 @@ pub use graph::{
     DagPlanner, DiagnosticSeverity, EdgeKind, EdgeSpec, ExternalInput, GraphDiagnostic,
     GraphValidationReport, NodeKind, NodeSpec, PlanClosureMode, PlanOrderMode, PlanSelectionMode,
     PlannedDagNode, RepoRole, ValidateOptions, WorkspaceDiscovery, WorkspaceGraphDraft,
+};
+pub use workspace_manage::{
+    clean_workspace, load_policy as load_workspace_policy, locked_workspace_repositories,
+    populate_workspace, resolve_management_policy, sync_workspace, WorkspaceAction,
+    WorkspaceActionKind, WorkspaceMutationReport, WORKSPACE_POLICY_FILE,
 };
