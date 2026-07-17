@@ -25,7 +25,7 @@ Stitch does not know how a repository is tested, formatted, committed, or publis
 
 ## Repository maintenance
 
-The repository uses standalone devenv tasks. The project flake remains independent from devenv.
+The repository uses standalone devenv tasks. The project flake remains independent from devenv, and CI executes the same deterministic task graph used locally.
 
 ```sh
 devenv test
