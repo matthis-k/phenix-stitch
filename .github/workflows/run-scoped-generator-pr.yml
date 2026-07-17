@@ -1,0 +1,35 @@
+name: Run scoped Stitch generator
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.event.pull_request.head.ref == 'refactor/scoped-stitch-maintenance'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refactor/scoped-stitch-maintenance
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - uses: cachix/cachix-action@v17
+        with: { name: devenv }
+      - name: Execute branch generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -n '/^        run: |$/,$p' .github/workflows/prepare-scoped-stitch-pr.yml \
+            | tail -n +2 \
+            | sed 's/^          //' > /tmp/generate.sh
+          sed -i '/git config user.name/i rm -f .github/workflows/run-scoped-generator-pr.yml' /tmp/generate.sh
+          bash /tmp/generate.sh
