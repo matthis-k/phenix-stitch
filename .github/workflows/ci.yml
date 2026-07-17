@@ -34,7 +34,20 @@ jobs:
       - name: Install devenv
         run: nix profile add nixpkgs#devenv
       - name: Run repository maintenance
-        run: devenv test
+        shell: bash
+        run: |
+          set +e
+          devenv test > devenv-test.log 2>&1
+          status=$?
+          tail -n 500 devenv-test.log
+          exit "$status"
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-inventory-diagnostics
+          path: devenv-test.log
+          if-no-files-found: error
       - name: Enforce scoped surface
         shell: bash
         run: |
