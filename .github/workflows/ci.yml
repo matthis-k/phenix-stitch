@@ -39,5 +39,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ! git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)'
-          ! git grep -niE 'workloop|changeset|recipe|hooks install|sync --'
+          ! git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)' -- . ':(exclude).github/workflows/**'
+          ! git grep -niE 'workloop|changeset|recipe|hooks install|sync --' -- . ':(exclude).github/workflows/**'
