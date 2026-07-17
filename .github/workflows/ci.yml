@@ -1,21 +1,26 @@
-name: Normalize workspace inventory
+name: CI
 
 on:
   pull_request:
+  push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  normalize:
-    if: github.event.pull_request.head.ref == 'feat/local-workspace-management'
+  checks:
+    name: Final maintenance checks
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          ref: feat/local-workspace-management
           fetch-depth: 0
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
         with:
@@ -26,13 +31,13 @@ jobs:
       - uses: cachix/cachix-action@v17
         with:
           name: devenv
-      - run: nix profile add nixpkgs#devenv
-      - name: Apply deterministic fixes
+      - name: Install devenv
+        run: nix profile add nixpkgs#devenv
+      - name: Run repository maintenance
+        run: devenv test
+      - name: Enforce scoped surface
+        shell: bash
         run: |
           set -euo pipefail
-          devenv tasks run maintenance:fix
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A -- . ':(exclude).github/workflows/**'
-          git diff --cached --quiet || git commit -m "chore: normalize workspace inventory"
-          git push origin HEAD:feat/local-workspace-management
+          ! git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)' -- . ':(exclude).github/workflows/**'
+          ! git grep -niE 'workloop|changeset|recipe|hooks install|sync --' -- . ':(exclude).github/workflows/**'
