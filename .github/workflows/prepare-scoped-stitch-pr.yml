@@ -1,4 +1,4 @@
-name: Prepare scoped Stitch PR
+name: Prepare scoped Stitch branch
 
 on:
   push:
