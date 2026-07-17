@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Maintenance checks
+    name: Final maintenance checks
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
