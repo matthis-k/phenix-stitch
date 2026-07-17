@@ -1,13 +1,9 @@
 {
-  description = "Phenix multi-repo Git coordinator (stitch CLI + MCP)";
+  description = "Dependency-aware ordered execution across Phenix repositories";
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
     phenix-pins.url = "github:matthis-k/phenix-pins";
-    phenix-tend = {
-      url = "github:matthis-k/phenix-tend";
-      inputs.phenix-pins.follows = "phenix-pins";
-    };
     nixpkgs.follows = "phenix-pins/nixpkgs";
   };
 

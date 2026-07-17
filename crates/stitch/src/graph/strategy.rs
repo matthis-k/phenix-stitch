@@ -35,8 +35,10 @@ impl FlakeLocksStrategy {
         discovery: WorkspaceDiscovery,
     ) -> Result<WorkspaceGraphDraft, StrategyError> {
         let aliases = build_workspace_aliases(&discovery.nodes);
+        let manual_edges = discovery.manual_edges;
         let nodes: BTreeMap<String, NodeSpec> = discovery.nodes.into_iter().collect();
         let mut draft = WorkspaceGraphDraft::new(nodes);
+        draft.edges.extend(manual_edges);
         let node_ids: Vec<String> = draft.nodes.keys().cloned().collect();
 
         for node_id in &node_ids {

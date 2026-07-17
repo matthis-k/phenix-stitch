@@ -3,3 +3,7 @@ result
 .cache
 .phenix-agent-state/
 .pre-commit-config.yaml
+
+.devenv/
+.direnv/
+.pre-commit-config.yaml
