@@ -102,6 +102,55 @@ jobs:
           }
           ''')
 
+          Path("crates/stitch/src/status.rs").write_text(r'''use crate::git;
+          use crate::model::{RepoAvailability, RepoStatus, WorkspaceConfig};
+
+          pub fn collect_all(config: &WorkspaceConfig) -> Result<Vec<RepoStatus>, String> {
+              let mut statuses = Vec::new();
+              for repository in &config.repos {
+                  let path = repository.resolved_path(config);
+                  if !path.exists() {
+                      statuses.push(RepoStatus {
+                          name: repository.name.clone(),
+                          path: repository.path.clone(),
+                          branch: String::new(),
+                          is_dirty: false,
+                          status: RepoAvailability::Missing,
+                          staged_count: 0,
+                          unstaged_count: 0,
+                          untracked_count: 0,
+                          ahead: None,
+                          behind: None,
+                      });
+                      continue;
+                  }
+                  if !path.join(".git").exists() {
+                      statuses.push(RepoStatus {
+                          name: repository.name.clone(),
+                          path: repository.path.clone(),
+                          branch: String::new(),
+                          is_dirty: false,
+                          status: RepoAvailability::NotGitRepo,
+                          staged_count: 0,
+                          unstaged_count: 0,
+                          untracked_count: 0,
+                          ahead: None,
+                          behind: None,
+                      });
+                      continue;
+                  }
+                  statuses.push(git::get_status(&repository.name, &path)?);
+              }
+              Ok(statuses)
+          }
+          ''')
+
+          render = Path("crates/stitch/src/graph/render.rs")
+          text = render.read_text().replace("use crate::model::WorkspaceConfig;\n", "")
+          start = text.index("pub fn operation_dag_json(")
+          end = text.index("fn render_graph_text(", start)
+          render.write_text(text[:start] + text[end:])
+
           cli = Path("crates/stitch-cli/src/main.rs")
           cli.write_text(
               cli.read_text().replace(
@@ -119,9 +168,13 @@ jobs:
           )
           PY
 
+          rm -rf crates/stitch/src/changeset
           rm -f \
             crates/stitch/src/validate.rs \
             crates/stitch/src/time.rs \
+            docs/tend-boundary.md \
+            docs/dag-generation-strategy.md \
+            tend-shell.nix \
             .github/workflows/prepare-scoped-stitch-pr.yml \
             .github/workflows/refine-stitch-scope.yml \
             .github/workflows/run-scoped-generator-pr.yml \
