@@ -1,0 +1,345 @@
+name: Prepare scoped Stitch PR
+
+on:
+  push:
+    branches: [refactor/scoped-stitch-maintenance]
+    paths: [.github/workflows/prepare-scoped-stitch-pr.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refactor/scoped-stitch-maintenance
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - uses: cachix/cachix-action@v17
+        with: { name: devenv }
+      - name: Generate scoped implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sed -n '/^        run: |$/,$p' .github/workflows/refine-stitch-scope.yml \
+            | tail -n +2 \
+            | sed 's/^          //' > /tmp/refine.sh
+          sed -i '/^nix flake update$/,$d' /tmp/refine.sh
+          bash /tmp/refine.sh
+
+          rm -f crates/caretaker.nix modules/caretaker.nix
+
+          cat > flake.nix <<'EOF'
+          {
+            description = "Dependency-aware ordered execution across Phenix repositories";
+
+            inputs = {
+              flake-parts.url = "github:hercules-ci/flake-parts";
+              phenix-pins.url = "github:matthis-k/phenix-pins";
+              nixpkgs.follows = "phenix-pins/nixpkgs";
+            };
+
+            outputs = inputs@{ flake-parts, ... }:
+              flake-parts.lib.mkFlake { inherit inputs; } {
+                systems = [ "x86_64-linux" "aarch64-linux" ];
+                imports = [ ./modules/package.nix ];
+                flake.flakeModules.default = import ./modules/flake-module.nix;
+              };
+          }
+          EOF
+
+          cat > modules/package.nix <<'EOF'
+          { lib, ... }:
+          {
+            perSystem =
+              { pkgs, ... }:
+              let
+                source = lib.cleanSource ../.;
+                cargoLock = { lockFile = ../Cargo.lock; };
+
+                stitchUnwrapped = pkgs.rustPlatform.buildRustPackage {
+                  pname = "stitch";
+                  version = "0.1.0";
+                  src = source;
+                  inherit cargoLock;
+                  cargoBuildFlags = "-p stitch-cli";
+                  nativeBuildInputs = [ pkgs.git ];
+                };
+
+                stitchMcpUnwrapped = pkgs.rustPlatform.buildRustPackage {
+                  pname = "stitch-mcp";
+                  version = "0.1.0";
+                  src = source;
+                  inherit cargoLock;
+                  cargoBuildFlags = "-p stitch-mcp";
+                  nativeBuildInputs = [ pkgs.git ];
+                };
+
+                runtime = [ pkgs.git pkgs.nix ];
+
+                stitch = pkgs.writeShellApplication {
+                  name = "stitch";
+                  runtimeInputs = runtime;
+                  text = ''exec ${stitchUnwrapped}/bin/stitch "$@"'';
+                };
+
+                stitchMcp = pkgs.writeShellApplication {
+                  name = "stitch-mcp";
+                  runtimeInputs = runtime;
+                  text = ''exec ${stitchMcpUnwrapped}/bin/stitch-mcp "$@"'';
+                };
+              in
+              {
+                packages = {
+                  inherit stitch;
+                  stitch-unwrapped = stitchUnwrapped;
+                  stitch-mcp = stitchMcp;
+                  stitch-mcp-unwrapped = stitchMcpUnwrapped;
+                  default = stitch;
+                };
+
+                checks = {
+                  stitch-package = stitch;
+                  stitch-mcp-package = stitchMcp;
+                };
+
+                apps = {
+                  stitch = {
+                    type = "app";
+                    program = "${stitch}/bin/stitch";
+                  };
+                  stitch-mcp = {
+                    type = "app";
+                    program = "${stitchMcp}/bin/stitch-mcp";
+                  };
+                  default = {
+                    type = "app";
+                    program = "${stitch}/bin/stitch";
+                  };
+                };
+
+                devShells.default = pkgs.mkShell {
+                  name = "phenix-stitch-dev";
+                  packages = [
+                    stitch
+                    stitchMcp
+                    pkgs.devenv
+                    pkgs.cargo
+                    pkgs.rustc
+                    pkgs.rustfmt
+                    pkgs.clippy
+                    pkgs.rust-analyzer
+                    pkgs.git
+                    pkgs.nix
+                  ];
+                  shellHook = ''
+                    echo "phenix-stitch development shell"
+                    echo "  maintenance: devenv test"
+                    echo "  fixes:       devenv tasks run maintenance:fix"
+                    echo "  stitch:      $(stitch --version 2>/dev/null || echo '?')"
+                  '';
+                };
+              };
+          }
+          EOF
+
+          cat > devenv.yaml <<'EOF'
+          # yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
+          inputs:
+            nixpkgs:
+              url: github:NixOS/nixpkgs/nixos-unstable
+          EOF
+
+          cat > devenv.nix <<'EOF'
+          { lib, ... }:
+          let
+            maintenanceModules = builtins.filter (path: builtins.baseNameOf path == "maintenance.nix") (
+              lib.filesystem.listFilesRecursive ./.
+            );
+          in
+          {
+            imports = maintenanceModules;
+            enterTest = "";
+          }
+          EOF
+
+          cat > maintenance.nix <<'EOF'
+          { pkgs, ... }:
+          let
+            root = ''repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; cd "$repo_root"'';
+            nixSources = "find . -type f -name '*.nix' -not -path './.git/*' -not -path './.devenv/*' -not -path './target/*'";
+          in
+          {
+            scripts = {
+              "maintenance-check-rust-format" = {
+                packages = [ pkgs.cargo pkgs.rustfmt pkgs.git ];
+                exec = ''${root}; cargo fmt --all --check'';
+              };
+              "maintenance-check-rust-compile" = {
+                packages = [ pkgs.cargo pkgs.rustc pkgs.git ];
+                exec = ''${root}; cargo check --workspace --all-targets'';
+              };
+              "maintenance-check-rust-clippy" = {
+                packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.git ];
+                exec = ''${root}; cargo clippy --workspace --all-targets -- -D warnings'';
+              };
+              "maintenance-check-rust-tests" = {
+                packages = [ pkgs.cargo pkgs.rustc pkgs.git ];
+                exec = ''${root}; cargo test --workspace'';
+              };
+              "maintenance-check-nix-format" = {
+                packages = [ pkgs.findutils pkgs.git pkgs.nixfmt ];
+                exec = ''${root}; ${nixSources} -exec nixfmt --check {} +'';
+              };
+              "maintenance-check-statix" = {
+                packages = [ pkgs.git pkgs.statix ];
+                exec = ''${root}; statix check --ignore '.git/**' --ignore 'target/**' '';
+              };
+              "maintenance-check-deadnix" = {
+                packages = [ pkgs.deadnix pkgs.git ];
+                exec = ''${root}; deadnix --fail --no-lambda-arg --no-lambda-pattern-names'';
+              };
+              "maintenance-check-flake" = {
+                packages = [ pkgs.git pkgs.nix ];
+                exec = ''${root}; nix flake check --print-build-logs --keep-going'';
+              };
+              "maintenance-fix-statix" = {
+                packages = [ pkgs.git pkgs.statix ];
+                exec = ''${root}; statix fix'';
+              };
+              "maintenance-fix-format" = {
+                packages = [ pkgs.cargo pkgs.findutils pkgs.git pkgs.nixfmt pkgs.rustfmt ];
+                exec = ''
+                  ${root}
+                  cargo fmt --all
+                  ${nixSources} -exec nixfmt {} +
+                '';
+              };
+              "maintenance-fix-deadnix" = {
+                packages = [ pkgs.deadnix pkgs.git ];
+                exec = ''${root}; deadnix --edit --no-lambda-arg --no-lambda-pattern-names'';
+              };
+            };
+
+            tasks = {
+              "maintenance:rust-format".exec = "maintenance-check-rust-format";
+              "maintenance:rust-compile".exec = "maintenance-check-rust-compile";
+              "maintenance:rust-clippy".exec = "maintenance-check-rust-clippy";
+              "maintenance:rust-tests".exec = "maintenance-check-rust-tests";
+              "maintenance:nix-format".exec = "maintenance-check-nix-format";
+              "maintenance:statix".exec = "maintenance-check-statix";
+              "maintenance:deadnix".exec = "maintenance-check-deadnix";
+              "maintenance:flake".exec = "maintenance-check-flake";
+
+              "maintenance:check" = {
+                exec = "true";
+                after = [
+                  "maintenance:rust-format"
+                  "maintenance:rust-compile"
+                  "maintenance:rust-clippy"
+                  "maintenance:rust-tests"
+                  "maintenance:nix-format"
+                  "maintenance:statix"
+                  "maintenance:deadnix"
+                  "maintenance:flake"
+                ];
+                before = [ "devenv:enterTest" ];
+              };
+
+              "maintenance:fix:statix".exec = "maintenance-fix-statix";
+              "maintenance:fix:deadnix" = {
+                exec = "maintenance-fix-deadnix";
+                after = [ "maintenance:fix:statix" ];
+              };
+              "maintenance:fix:format" = {
+                exec = "maintenance-fix-format";
+                after = [ "maintenance:fix:deadnix" ];
+              };
+              "maintenance:fix" = {
+                exec = "true";
+                after = [ "maintenance:fix:format" ];
+              };
+            };
+          }
+          EOF
+
+          cat > .github/workflows/ci.yml <<'EOF'
+          name: CI
+
+          on:
+            pull_request:
+            push:
+              branches: [main]
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+
+          concurrency:
+            group: ci-${{ github.workflow }}-${{ github.ref }}
+            cancel-in-progress: true
+
+          jobs:
+            checks:
+              name: Maintenance checks
+              runs-on: ubuntu-latest
+              timeout-minutes: 90
+              steps:
+                - uses: actions/checkout@v5
+                  with: { fetch-depth: 0 }
+                - uses: cachix/install-nix-action@v31
+                  with:
+                    extra_nix_config: |
+                      experimental-features = nix-command flakes
+                      accept-flake-config = true
+                - uses: cachix/cachix-action@v17
+                  with: { name: devenv }
+                - run: nix profile add nixpkgs#devenv
+                - name: Run repository maintenance
+                  shell: bash
+                  run: |
+                    set +e
+                    devenv test > devenv-test.log 2>&1
+                    status=$?
+                    tail -n 400 devenv-test.log
+                    exit "$status"
+                - name: Upload diagnostics
+                  if: failure()
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: devenv-test-log
+                    path: devenv-test.log
+                    if-no-files-found: error
+          EOF
+
+          printf '\n.devenv/\n.direnv/\n.pre-commit-config.yaml\n' >> .gitignore
+
+          rm -f \
+            .github/workflows/prepare-scoped-stitch-pr.yml \
+            .github/workflows/refine-stitch-scope.yml \
+            .github/workflows/run-maintenance.yml \
+            .github/workflows/repair-refine-workflow.yml \
+            .maintenance-failure.log
+
+          nix profile add nixpkgs#devenv
+          devenv tasks run maintenance:fix
+          nix flake lock
+          devenv test
+
+          needle="$(printf 'te%s' 'nd')"
+          ! git grep -ni "$needle"
+          ! git grep -n -E 'workloop|changeset|recipe|hooks install|sync --'
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "refactor: scope Stitch to ordered repository execution"
+          git push origin HEAD:refactor/scoped-stitch-maintenance
