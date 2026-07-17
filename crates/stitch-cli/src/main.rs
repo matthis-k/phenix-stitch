@@ -5,7 +5,6 @@ use stitch::exec::{
     build_plan, build_scope, parse_closure_mode, parse_order_mode, ClosureMode, ExecutionMode,
     ExecutionScope, RunOptions, SelectionMode,
 };
-use stitch::WorkspaceMutationReport;
 
 #[derive(Parser)]
 #[command(
@@ -45,33 +44,9 @@ enum WorkspaceCommand {
         #[arg(long)]
         json: bool,
     },
-    Populate {
+    Inventory {
         #[arg(default_value = ".")]
         workspace: PathBuf,
-        #[arg(long)]
-        apply: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Clean {
-        #[arg(default_value = ".")]
-        workspace: PathBuf,
-        #[arg(long)]
-        apply: bool,
-        #[arg(long, requires = "apply")]
-        force: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Sync {
-        #[arg(default_value = ".")]
-        workspace: PathBuf,
-        #[arg(long)]
-        apply: bool,
-        #[arg(long)]
-        prune: bool,
-        #[arg(long, requires_all = ["apply", "prune"])]
-        force: bool,
         #[arg(long)]
         json: bool,
     },
@@ -163,63 +138,26 @@ fn workspace(command: WorkspaceCommand) -> Result<(), String> {
             }
             Ok(())
         }
-        WorkspaceCommand::Populate {
-            workspace,
-            apply,
-            json,
-        } => print_workspace_report(stitch::populate_workspace(&workspace, apply)?, json),
-        WorkspaceCommand::Clean {
-            workspace,
-            apply,
-            force,
-            json,
-        } => print_workspace_report(stitch::clean_workspace(&workspace, apply, force)?, json),
-        WorkspaceCommand::Sync {
-            workspace,
-            apply,
-            prune,
-            force,
-            json,
-        } => print_workspace_report(
-            stitch::sync_workspace(&workspace, apply, prune, force)?,
-            json,
-        ),
-    }
-}
-
-fn print_workspace_report(report: WorkspaceMutationReport, json: bool) -> Result<(), String> {
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-        );
-    } else {
-        for action in &report.actions {
-            println!(
-                "{:?}\t{}\t{}{}",
-                action.action,
-                action.repository,
-                action.path.display(),
-                action
-                    .reason
-                    .as_deref()
-                    .map(|reason| format!("\t{reason}"))
-                    .unwrap_or_default()
-            );
+        WorkspaceCommand::Inventory { workspace, json } => {
+            let repositories = stitch::locked_workspace_inventory(&workspace)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&repositories)
+                        .map_err(|error| error.to_string())?
+                );
+            } else {
+                for repository in repositories {
+                    println!(
+                        "{}\t{}\t{}",
+                        repository.name,
+                        repository.path,
+                        repository.remote.as_deref().unwrap_or("")
+                    );
+                }
+            }
+            Ok(())
         }
-        println!(
-            "workspace={} applied={} changed={} blocked={}",
-            report.workspace, report.applied, report.changed, report.blocked
-        );
-    }
-
-    if report.blocked == 0 {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} workspace operation(s) were blocked",
-            report.blocked
-        ))
     }
 }
 
