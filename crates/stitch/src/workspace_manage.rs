@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::graph::parse_flake_lock;
 use crate::model::RepoConfig;
-use crate::workspace::{
-    git_remote_url, parse_remote_identity, WorkspaceDiscoveryPolicy,
-};
+use crate::workspace::{git_remote_url, parse_remote_identity, WorkspaceDiscoveryPolicy};
 
 pub const WORKSPACE_POLICY_FILE: &str = ".stitch-workspace.json";
 
@@ -246,10 +244,7 @@ mod tests {
 
         assert_eq!(
             names,
-            BTreeSet::from([
-                "phenix-opencode".to_string(),
-                "phenix-tools".to_string()
-            ])
+            BTreeSet::from(["phenix-opencode".to_string(), "phenix-tools".to_string()])
         );
     }
 
