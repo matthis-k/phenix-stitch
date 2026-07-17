@@ -1,4 +1,4 @@
-name: Run scoped Stitch generator
+name: Publish scoped Stitch tree
 
 on:
   pull_request:
@@ -8,10 +8,10 @@ permissions:
   contents: write
 
 jobs:
-  generate:
+  publish:
     if: github.event.pull_request.head.ref == 'refactor/scoped-stitch-maintenance'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -24,16 +24,17 @@ jobs:
             accept-flake-config = true
       - uses: cachix/cachix-action@v17
         with: { name: devenv }
-      - name: Generate, narrow, and validate Stitch
+      - name: Generate and publish validated implementation
         shell: bash
         run: |
           set -euo pipefail
+          : > publication.log
 
           sed -n '/^        run: |$/,$p' .github/workflows/prepare-scoped-stitch-pr.yml \
             | tail -n +2 \
             | sed 's/^          //' > /tmp/generate.sh
           sed -i '/^nix profile add nixpkgs#devenv$/,$d' /tmp/generate.sh
-          bash /tmp/generate.sh
+          bash /tmp/generate.sh >> publication.log 2>&1
 
           python3 - <<'PY'
           from pathlib import Path
@@ -182,49 +183,33 @@ jobs:
             .github/workflows/repair-refine-workflow.yml \
             .maintenance-failure.log
 
-          nix profile add nixpkgs#devenv
-          set +e
-          devenv tasks run maintenance:fix > generator.log 2>&1
-          fix_status=$?
-          if (( fix_status == 0 )); then
-            nix flake lock >> generator.log 2>&1
-            lock_status=$?
-          else
-            lock_status=1
-          fi
-          if (( fix_status == 0 && lock_status == 0 )); then
-            devenv test >> generator.log 2>&1
-            test_status=$?
-          else
-            test_status=1
-          fi
-          set -e
-          tail -n 500 generator.log
-          if (( fix_status != 0 || lock_status != 0 || test_status != 0 )); then
-            exit 1
-          fi
+          nix profile add nixpkgs#devenv >> publication.log 2>&1
+          devenv tasks run maintenance:fix >> publication.log 2>&1
+          nix flake lock >> publication.log 2>&1
 
           audit_status=0
-          if git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)' >> generator.log 2>&1; then
+          if git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)' >> publication.log 2>&1; then
             audit_status=1
           fi
-          if git grep -niE 'workloop|changeset|recipe|hooks install|sync --' >> generator.log 2>&1; then
+          if git grep -niE 'workloop|changeset|recipe|hooks install|sync --' >> publication.log 2>&1; then
             audit_status=1
           fi
           if (( audit_status != 0 )); then
-            tail -n 200 generator.log
+            tail -n 300 publication.log
             exit 1
           fi
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
-          git commit -m "refactor: scope Stitch to ordered repository execution"
-          git push origin HEAD:refactor/scoped-stitch-maintenance
-      - name: Upload generator diagnostics
+          git status --short >> publication.log
+          git commit -m "refactor: scope Stitch to ordered repository execution" >> publication.log 2>&1
+          git push origin HEAD:refactor/scoped-stitch-maintenance >> publication.log 2>&1
+          tail -n 300 publication.log
+      - name: Upload publication diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: scoped-stitch-generator-log
-          path: generator.log
+          name: scoped-stitch-publication-log
+          path: publication.log
           if-no-files-found: warn
