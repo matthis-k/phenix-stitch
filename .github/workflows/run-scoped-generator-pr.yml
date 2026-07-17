@@ -32,4 +32,15 @@ jobs:
             | tail -n +2 \
             | sed 's/^          //' > /tmp/generate.sh
           sed -i '/git config user.name/i rm -f .github/workflows/run-scoped-generator-pr.yml' /tmp/generate.sh
-          bash /tmp/generate.sh
+          set +e
+          bash /tmp/generate.sh > generator.log 2>&1
+          status=$?
+          tail -n 400 generator.log
+          exit "$status"
+      - name: Upload generator diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scoped-stitch-generator-log
+          path: generator.log
+          if-no-files-found: error
