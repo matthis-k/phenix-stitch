@@ -4,13 +4,15 @@ use crate::model::WorkspaceConfig;
 
 const WORKSPACE_ROOT_ENV: &str = "STITCH_WORKSPACE_ROOT";
 const WORKSPACE_MARKER: &str = ".stitch-workspace";
+const WORKSPACE_POLICY_MARKER: &str = ".stitch-workspace.json";
 
 /// Resolve the workspace root and load the canonical discovered configuration.
 ///
 /// Resolution order is explicit environment, an ancestor workspace marker or
 /// `repos/` directory, then the current Git repository as a single-repository
 /// workspace. Committed `.stitch.json` inventory is deliberately not an
-/// authority.
+/// authority. A committed `.stitch-workspace.json` may constrain discovery
+/// without enumerating repositories.
 pub fn find_and_load() -> Result<WorkspaceConfig, String> {
     let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
 
@@ -35,14 +37,17 @@ pub fn load_workspace_root(root: &Path) -> Result<WorkspaceConfig, String> {
     if !root.exists() {
         return Err(format!("Workspace root does not exist: {}", root.display()));
     }
-    crate::workspace::load_workspace_config(root)
+    let policy = crate::workspace_manage::load_policy(root)?;
+    crate::workspace::load_workspace_config_with_policy(root, policy)
 }
 
 fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .find(|directory| {
-            directory.join(WORKSPACE_MARKER).exists() || directory.join("repos").is_dir()
+            directory.join(WORKSPACE_MARKER).exists()
+                || directory.join(WORKSPACE_POLICY_MARKER).exists()
+                || directory.join("repos").is_dir()
         })
         .map(Path::to_path_buf)
 }
@@ -81,6 +86,17 @@ mod tests {
         let nested = workspace.join("nested/member");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(workspace.join(WORKSPACE_MARKER), "").unwrap();
+
+        assert_eq!(find_workspace_root(&nested), Some(workspace));
+    }
+
+    #[test]
+    fn committed_policy_defines_workspace_without_repos_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        let nested = workspace.join("nested/member");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(workspace.join(WORKSPACE_POLICY_MARKER), "{}").unwrap();
 
         assert_eq!(find_workspace_root(&nested), Some(workspace));
     }
