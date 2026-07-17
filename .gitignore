@@ -1,9 +1,16 @@
-/target
+# Build outputs
+/target/
 result
-.cache
+result-*
+
+# Local development state
+.cache/
+.devenv/
+.direnv/
 .phenix-agent-state/
 .pre-commit-config.yaml
 
-.devenv/
-.direnv/
-.pre-commit-config.yaml
+# Diagnostics and temporary migration state
+*.log
+*.log.*
+.maintenance-trigger
