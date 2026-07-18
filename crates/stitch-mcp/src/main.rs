@@ -20,8 +20,12 @@ fn main() {
         server_version: "0.1.0".to_string(),
     };
     let mut server = McpServer::new(context);
+    server.add_tool(Box::new(tools::StitchWorkspaceDiscoverTool));
+    server.add_tool(Box::new(tools::StitchWorkspaceInventoryTool));
+    server.add_tool(Box::new(tools::StitchGraphDeriveTool));
+    server.add_tool(Box::new(tools::StitchGraphVerifyTool));
+    server.add_tool(Box::new(tools::StitchGraphOrderTool));
     server.add_tool(Box::new(tools::StitchStatusTool));
-    server.add_tool(Box::new(tools::StitchGraphTool));
-    server.add_tool(Box::new(tools::StitchPlanTool));
+    server.add_tool(Box::new(tools::StitchExecTool));
     server.run();
 }
