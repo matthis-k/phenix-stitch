@@ -71,10 +71,7 @@ impl CommandRunner {
     }
 }
 
-fn run_with_timeout(
-    cmd: &mut Command,
-    timeout: std::time::Duration,
-) -> Result<Output, String> {
+fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Result<Output, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let start = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|error| format!("Spawn: {error}"))?;
@@ -132,10 +129,7 @@ fn read_stream(
     })
 }
 
-fn join_stream(
-    reader: JoinHandle<Result<Vec<u8>, String>>,
-    name: &str,
-) -> Result<Vec<u8>, String> {
+fn join_stream(reader: JoinHandle<Result<Vec<u8>, String>>, name: &str) -> Result<Vec<u8>, String> {
     reader
         .join()
         .map_err(|_| format!("{name} reader thread panicked"))?
@@ -173,11 +167,7 @@ mod tests {
 
     #[test]
     fn timeout_path_terminates_long_running_command() {
-        let argv = vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "sleep 1".to_string(),
-        ];
+        let argv = vec!["sh".to_string(), "-c".to_string(), "sleep 1".to_string()];
         let error = CommandRunner::new().run(&argv, None, Some(0)).unwrap_err();
 
         assert!(error.contains("timed out"));
