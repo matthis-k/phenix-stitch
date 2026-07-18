@@ -32,12 +32,6 @@ pub enum OrderMode {
     ConsumersFirst,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionMode {
-    ReadOnly,
-    Mutating,
-}
-
 #[derive(Debug, Clone)]
 pub struct ExecutionScope {
     pub selection: SelectionMode,
@@ -60,13 +54,11 @@ pub struct ExecutionNode {
 pub struct ExecutionPlan {
     pub nodes: Vec<ExecutionNode>,
     pub argv: Vec<String>,
-    pub mode: ExecutionMode,
 }
 
 #[derive(Debug, Clone)]
 pub struct RunOptions {
     pub dry_run: bool,
-    pub apply: bool,
     pub keep_going: bool,
 }
 
@@ -117,14 +109,6 @@ pub fn parse_order_mode(value: &str) -> Result<OrderMode, String> {
         "providers-first" => Ok(OrderMode::ProvidersFirst),
         "consumers-first" => Ok(OrderMode::ConsumersFirst),
         _ => Err(format!("unknown order '{value}'")),
-    }
-}
-
-pub fn parse_execution_mode(value: &str) -> Result<ExecutionMode, String> {
-    match value {
-        "read-only" | "readonly" => Ok(ExecutionMode::ReadOnly),
-        "mutating" => Ok(ExecutionMode::Mutating),
-        _ => Err(format!("unknown execution mode '{value}'")),
     }
 }
 
@@ -191,7 +175,6 @@ pub fn build_plan(
     config: &WorkspaceConfig,
     scope: &ExecutionScope,
     argv: Vec<String>,
-    mode: ExecutionMode,
 ) -> Result<ExecutionPlan, String> {
     if argv.is_empty() {
         return Err("an argv vector is required after --".to_string());
@@ -199,14 +182,10 @@ pub fn build_plan(
     Ok(ExecutionPlan {
         nodes: build_scope(config, scope)?,
         argv,
-        mode,
     })
 }
 
 pub fn run_plan(plan: &ExecutionPlan, options: &RunOptions) -> Result<ExecutionReport, String> {
-    if plan.mode == ExecutionMode::Mutating && !options.apply && !options.dry_run {
-        return Err("mutating execution requires --apply or --dry-run".to_string());
-    }
     let mut results = Vec::new();
     let total = plan.nodes.len();
     let mut stopped_early = false;
