@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use stitch::exec::{
-    build_plan, build_scope, parse_closure_mode, parse_order_mode, ClosureMode, ExecutionMode,
-    ExecutionScope, RunOptions, SelectionMode,
+    build_plan, build_scope, parse_closure_mode, parse_order_mode, ClosureMode, ExecutionScope,
+    RunOptions, SelectionMode,
 };
 
 #[derive(Parser)]
@@ -33,6 +33,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Execute an arbitrary command in the selected repositories.
     Exec(ExecArgs),
 }
 
@@ -94,8 +95,7 @@ struct ExecArgs {
     closure: String,
     #[arg(long, default_value = "providers-first")]
     order: String,
-    #[arg(long)]
-    apply: bool,
+    /// Show the selected repositories and command without executing it.
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -297,17 +297,11 @@ fn exec(args: ExecArgs) -> Result<(), String> {
         closure: parse_closure_mode(&args.closure)?,
         order: parse_order_mode(&args.order)?,
     };
-    let mode = if args.apply {
-        ExecutionMode::Mutating
-    } else {
-        ExecutionMode::ReadOnly
-    };
-    let plan = build_plan(&config, &scope, args.command, mode)?;
+    let plan = build_plan(&config, &scope, args.command)?;
     let report = stitch::exec::run_plan(
         &plan,
         &RunOptions {
             dry_run: args.dry_run,
-            apply: args.apply,
             keep_going: args.keep_going,
         },
     )?;
