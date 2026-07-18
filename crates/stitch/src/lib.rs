@@ -8,9 +8,9 @@ pub mod workspace;
 pub mod workspace_manage;
 
 pub use exec::{
-    build_plan, build_scope, parse_closure_mode, parse_execution_mode, parse_order_mode,
-    parse_selection_mode, run_plan, ClosureMode, ExecutionMode, ExecutionNode, ExecutionPlan,
-    ExecutionReport, ExecutionScope, OrderMode, RunOptions, SelectionMode,
+    build_plan, build_scope, parse_closure_mode, parse_order_mode, parse_selection_mode, run_plan,
+    ClosureMode, ExecutionNode, ExecutionPlan, ExecutionReport, ExecutionScope, OrderMode,
+    RunOptions, SelectionMode,
 };
 pub use graph::{
     derive_workspace_graph, derive_workspace_graph_from_config, discover_inventory,
