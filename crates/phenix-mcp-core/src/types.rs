@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MutationLevel {
     ReadOnly,
+    /// The tool deliberately accepts arbitrary operations and does not attempt
+    /// to classify or gate their effects.
+    Arbitrary,
     WritesWorktree,
     WritesGitIndex,
     CreatesCommit,
@@ -16,7 +19,14 @@ impl MutationLevel {
     }
 
     pub fn requires_apply(&self) -> bool {
-        !matches!(self, MutationLevel::ReadOnly)
+        matches!(
+            self,
+            MutationLevel::WritesWorktree
+                | MutationLevel::WritesGitIndex
+                | MutationLevel::CreatesCommit
+                | MutationLevel::Network
+                | MutationLevel::Destructive
+        )
     }
 
     pub fn requires_confirmation(&self) -> bool {
@@ -131,4 +141,16 @@ pub struct ToolMetadata {
     pub requires_confirmation: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_roots_only: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arbitrary_tools_do_not_gain_an_apply_gate() {
+        assert!(!MutationLevel::Arbitrary.is_read_only());
+        assert!(!MutationLevel::Arbitrary.requires_apply());
+        assert!(!MutationLevel::Arbitrary.requires_confirmation());
+    }
 }
