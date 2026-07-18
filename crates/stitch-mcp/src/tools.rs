@@ -245,10 +245,8 @@ impl McpTool for StitchGraphVerifyTool {
             .map_err(|error| failure(ErrorKind::InvalidInput, error, &audit_id))?;
         let graph = stitch::graph::derive_workspace_graph_from_config(&config, None)
             .map_err(|error| failure(ErrorKind::InvalidInput, error.to_string(), &audit_id))?;
-        let report = stitch::graph::validate_graph(
-            &graph,
-            &stitch::graph::ValidateOptions { strict },
-        );
+        let report =
+            stitch::graph::validate_graph(&graph, &stitch::graph::ValidateOptions { strict });
         let summary = if report.valid {
             "graph validation passed"
         } else {
@@ -305,11 +303,7 @@ impl McpTool for StitchGraphOrderTool {
             },
         )
         .map_err(|error| failure(ErrorKind::InvalidInput, error, &audit_id))?;
-        Ok(success(
-            json!(nodes),
-            "ordered repository graph",
-            &audit_id,
-        ))
+        Ok(success(json!(nodes), "ordered repository graph", &audit_id))
     }
 }
 
@@ -474,8 +468,14 @@ mod tests {
 
     #[test]
     fn tool_names_mirror_the_cli_surface() {
-        assert_eq!(StitchWorkspaceDiscoverTool.name(), "stitch.workspace.discover");
-        assert_eq!(StitchWorkspaceInventoryTool.name(), "stitch.workspace.inventory");
+        assert_eq!(
+            StitchWorkspaceDiscoverTool.name(),
+            "stitch.workspace.discover"
+        );
+        assert_eq!(
+            StitchWorkspaceInventoryTool.name(),
+            "stitch.workspace.inventory"
+        );
         assert_eq!(StitchGraphDeriveTool.name(), "stitch.graph.derive");
         assert_eq!(StitchGraphVerifyTool.name(), "stitch.graph.verify");
         assert_eq!(StitchGraphOrderTool.name(), "stitch.graph.order");
