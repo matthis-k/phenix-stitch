@@ -1,5 +1,7 @@
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crate::types::CommandResult;
@@ -37,15 +39,15 @@ impl CommandRunner {
 
         let output = if let Some(timeout) = timeout_seconds {
             let timeout_dur = std::time::Duration::from_secs(timeout);
-            match crate::runner::run_with_timeout(&mut cmd, timeout_dur) {
+            match run_with_timeout(&mut cmd, timeout_dur) {
                 Ok(result) => result,
-                Err(e) => {
-                    return Err(format!("Command timed out after {}s: {}", timeout, e));
+                Err(error) => {
+                    return Err(format!("Command timed out after {timeout}s: {error}"));
                 }
             }
         } else {
             cmd.output()
-                .map_err(|e| format!("Failed to execute command: {}", e))?
+                .map_err(|error| format!("Failed to execute command: {error}"))?
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -69,35 +71,68 @@ impl CommandRunner {
     }
 }
 
-fn run_with_timeout(
-    cmd: &mut Command,
-    timeout: std::time::Duration,
-) -> Result<std::process::Output, String> {
+fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Result<Output, String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let start = std::time::Instant::now();
-    let mut child = cmd.spawn().map_err(|e| format!("Spawn: {}", e))?;
+    let mut child = cmd.spawn().map_err(|error| format!("Spawn: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "stdout pipe was not available".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "stderr pipe was not available".to_string())?;
+    let stdout_reader = read_stream(stdout, "stdout");
+    let stderr_reader = read_stream(stderr, "stderr");
 
     loop {
         match child.try_wait() {
-            Ok(Some(_status)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| format!("Wait: {}", e))?;
-                return Ok(output);
+            Ok(Some(status)) => {
+                return Ok(Output {
+                    status,
+                    stdout: join_stream(stdout_reader, "stdout")?,
+                    stderr: join_stream(stderr_reader, "stderr")?,
+                });
+            }
+            Ok(None) if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = join_stream(stdout_reader, "stdout");
+                let _ = join_stream(stderr_reader, "stderr");
+                return Err("timeout".to_string());
             }
             Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err("timeout".to_string());
-                }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
-            Err(e) => {
+            Err(error) => {
                 let _ = child.kill();
-                return Err(format!("Wait error: {}", e));
+                let _ = child.wait();
+                let _ = join_stream(stdout_reader, "stdout");
+                let _ = join_stream(stderr_reader, "stderr");
+                return Err(format!("Wait error: {error}"));
             }
         }
     }
+}
+
+fn read_stream(
+    mut stream: impl Read + Send + 'static,
+    name: &'static str,
+) -> JoinHandle<Result<Vec<u8>, String>> {
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stream
+            .read_to_end(&mut output)
+            .map_err(|error| format!("Read {name}: {error}"))?;
+        Ok(output)
+    })
+}
+
+fn join_stream(reader: JoinHandle<Result<Vec<u8>, String>>, name: &str) -> Result<Vec<u8>, String> {
+    reader
+        .join()
+        .map_err(|_| format!("{name} reader thread panicked"))?
 }
 
 pub fn validate_argv(argv: &[String]) -> Result<(), String> {
@@ -105,9 +140,36 @@ pub fn validate_argv(argv: &[String]) -> Result<(), String> {
         return Err("Command must have at least one argument".to_string());
     }
 
-    if argv.iter().any(|a| a.is_empty()) {
+    if argv.iter().any(|argument| argument.is_empty()) {
         return Err("Command arguments must not be empty strings".to_string());
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_path_captures_stdout_and_stderr() {
+        let argv = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "printf stdout; printf stderr >&2".to_string(),
+        ];
+        let result = CommandRunner::new().run(&argv, None, Some(1)).unwrap();
+
+        assert_eq!(result.stdout, "stdout");
+        assert_eq!(result.stderr, "stderr");
+        assert_eq!(result.exit_code, Some(0));
+    }
+
+    #[test]
+    fn timeout_path_terminates_long_running_command() {
+        let argv = vec!["sh".to_string(), "-c".to_string(), "sleep 1".to_string()];
+        let error = CommandRunner::new().run(&argv, None, Some(0)).unwrap_err();
+
+        assert!(error.contains("timed out"));
+    }
 }
