@@ -1,6 +1,7 @@
 name: Branch diagnostics
 
 on:
+  pull_request:
   push:
     branches: [qa/align-cli-mcp]
 
