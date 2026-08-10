@@ -1,43 +1,36 @@
-name: CI
+name: Sync lock graph
 
 on:
   pull_request:
-  push:
-    branches: [main]
-  workflow_dispatch:
 
 permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  checks:
-    name: Final maintenance checks
+  sync:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
-      - uses: cachix/cachix-action@v17
-        with:
-          name: devenv
-      - name: Install devenv
-        run: nix profile add nixpkgs#devenv
-      - name: Run repository maintenance
-        run: devenv test
-      - name: Enforce scoped surface
-        shell: bash
+      - name: Update bottom-up inputs
         run: |
           set -euo pipefail
-          ! git grep -niE '(^|[^[:alnum:]_-])tend([^[:alnum:]_-]|$)' -- . ':(exclude).github/workflows/**'
-          ! git grep -niE 'workloop|changeset|recipe|hooks install|sync --' -- . ':(exclude).github/workflows/**'
+          nix flake update phenix-pins phenix-flake-ci
+          git diff -- flake.lock
+          if git diff --quiet -- flake.lock; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add flake.lock
+          git commit -m 'deps: sync merged phenix-pins [skip ci]'
+          git push origin HEAD:${{ github.head_ref }}
