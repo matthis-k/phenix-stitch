@@ -71,27 +71,5 @@
           program = "${stitch}/bin/stitch";
         };
       };
-
-      devShells.default = pkgs.mkShell {
-        name = "phenix-stitch-dev";
-        packages = [
-          stitch
-          stitchMcp
-          pkgs.devenv
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.rustfmt
-          pkgs.clippy
-          pkgs.rust-analyzer
-          pkgs.git
-          pkgs.nix
-        ];
-        shellHook = ''
-          echo "phenix-stitch development shell"
-          echo "  maintenance: devenv test"
-          echo "  fixes:       devenv tasks run maintenance:fix"
-          echo "  stitch:      $(stitch --version 2>/dev/null || echo '?')"
-        '';
-      };
     };
 }
