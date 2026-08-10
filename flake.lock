@@ -183,11 +183,11 @@
         "sops-nix": "sops-nix"
       },
       "locked": {
-        "lastModified": 1786388551,
-        "narHash": "sha256-3+peEE5PbIFXL8XZy+gLSgFRQEA8Cic0FpqRQVaMGTc=",
+        "lastModified": 1786402137,
+        "narHash": "sha256-HKXu/kiuVhyQknSf3hUEBbfSlhyiLbAT9tyLVWC0Os0=",
         "owner": "matthis-k",
         "repo": "phenix-pins",
-        "rev": "303219176d2aa3357726bee28981d391b6d8c095",
+        "rev": "5dc4674809a128afd5a6e8a4feb7e3e13ec0c885",
         "type": "github"
       },
       "original": {
