@@ -3,7 +3,10 @@
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
-    phenix-pins.url = "github:matthis-k/phenix-pins";
+    phenix-pins = {
+      url = "github:matthis-k/phenix-pins";
+      inputs.phenix-flake-ci.follows = "phenix-flake-ci";
+    };
     phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci";
     nixpkgs.follows = "phenix-pins/nixpkgs";
   };
