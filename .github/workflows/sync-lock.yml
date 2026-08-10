@@ -1,0 +1,33 @@
+name: Sync lock graph
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Synchronize pins
+        run: |
+          set -euo pipefail
+          nix flake update phenix-pins phenix-flake-ci
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add flake.lock
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'deps: synchronize updated pins [skip ci]'
+          git push origin HEAD:${{ github.head_ref }}
