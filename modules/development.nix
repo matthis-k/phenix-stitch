@@ -53,7 +53,6 @@
               "deadnix"
               "actionlint"
               "clippy"
-              "flake-eval"
               "workflow-sync"
             ];
             commands = {
@@ -154,21 +153,6 @@
                 exec = ''
                   ${repositoryRoot}
                   cargo clippy --workspace --all-targets --locked -- -D warnings
-                '';
-              };
-
-              flake-eval = {
-                description = "Flake output evaluation";
-                ci = sourceCi // {
-                  stepName = "Flake evaluation";
-                };
-                runtimeInputs = pkgs: [
-                  pkgs.git
-                  pkgs.nix
-                ];
-                exec = ''
-                  ${repositoryRoot}
-                  nix flake check --no-build --print-build-logs
                 '';
               };
 

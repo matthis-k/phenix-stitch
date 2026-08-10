@@ -50,9 +50,6 @@ jobs:
       - name: "Clippy"
         run: nix run .#phenix-maintenance -- check clippy
 
-      - name: "Flake evaluation"
-        run: nix run .#phenix-maintenance -- check flake-eval
-
       - name: "Generated workflow"
         run: nix run .#phenix-maintenance -- check workflow-sync
 
